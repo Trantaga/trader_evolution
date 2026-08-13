@@ -1,0 +1,140 @@
+========================================================================================
+GENERATOR VALIDATION REPORT
+========================================================================================
+Mix run: 50000 hours, seed=123
+Regime shares  bull: generated=31.3% / calibration=32.4%, bear: generated=34.4% / calibration=30.8%, sideways: generated=34.3% / calibration=36.7%
+
+GENERATED vs REAL — per-coin stylized facts
+----------------------------------------------------------------------------------------
+-- BTC --
+[PASS] ann_vol[BTC]                 generated=    0.5778  real=    0.6369  rel_err=   9.3%  (tol +/-20%)
+[PASS] excess_kurtosis[BTC]         generated=    8.0697  real=   15.0463  rel_err=  46.4%  (tol +/-60%)
+[PASS] acf_abs_lag1[BTC] (vol clustering) generated=    0.2691  real=    0.2800  abs_err= 0.0109  (tol +/-0.08)
+-- ETH --
+[PASS] ann_vol[ETH]                 generated=    0.7589  real=    0.8110  rel_err=   6.4%  (tol +/-20%)
+[PASS] excess_kurtosis[ETH]         generated=    8.0055  real=   13.5164  rel_err=  40.8%  (tol +/-60%)
+[PASS] acf_abs_lag1[ETH] (vol clustering) generated=    0.2557  real=    0.2917  abs_err= 0.0360  (tol +/-0.08)
+-- BNB --
+[PASS] ann_vol[BNB]                 generated=    0.7916  real=    0.8706  rel_err=   9.1%  (tol +/-20%)
+[WARN] excess_kurtosis[BNB]         generated=    7.1057  real=   26.1317  rel_err=  72.8%  (tol +/-60%)
+[WARN] acf_abs_lag1[BNB] (vol clustering) generated=    0.2545  real=    0.3646  abs_err= 0.1101  (tol +/-0.08)
+-- MATIC --
+[PASS] ann_vol[MATIC]               generated=    1.2602  real=    1.3155  rel_err=   4.2%  (tol +/-20%)
+[WARN] excess_kurtosis[MATIC]       generated=    7.4249  real=   23.2758  rel_err=  68.1%  (tol +/-60%)
+[WARN] acf_abs_lag1[MATIC] (vol clustering) generated=    0.2496  real=    0.3484  abs_err= 0.0988  (tol +/-0.08)
+-- SOL --
+[PASS] ann_vol[SOL]                 generated=    1.2826  real=    1.3553  rel_err=   5.4%  (tol +/-20%)
+[PASS] excess_kurtosis[SOL]         generated=    7.8599  real=   17.0639  rel_err=  53.9%  (tol +/-60%)
+[PASS] acf_abs_lag1[SOL] (vol clustering) generated=    0.2484  real=    0.3076  abs_err= 0.0592  (tol +/-0.08)
+
+BEFORE (v1.5, borrowed idio GARCH, no reset) vs AFTER (v2, own idio-residual GARCH
++ persistence cap + periodic reset) vs REAL  [seed=123, same 50000h mix]
+----------------------------------------------------------------------------------------
+coin    ann_vol_before  ann_vol_after ann_vol_real   | kurt_before kurt_after kurt_real   | acf_before acf_after acf_real
+BTC             0.5729         0.5778       0.6369   |        9.29       8.07     15.05   |      0.294     0.269    0.280
+ETH             0.7507         0.7589       0.8110   |        8.58       8.01     13.52   |      0.281     0.256    0.292
+BNB             0.6871         0.7916       0.8706   |       10.81       7.11     26.13   |      0.308     0.254    0.365
+MATIC           1.0925         1.2602       1.3155   |        7.73       7.42     23.28   |      0.278     0.250    0.348
+SOL             1.2592         1.2826       1.3553   |        6.63       7.86     17.06   |      0.252     0.248    0.308
+
+GENERATED vs REAL — correlation matrix (upper triangle), with v1.5 BEFORE for reference
+----------------------------------------------------------------------------------------
+[PASS] corr(BTC,ETH)                generated=    0.8359  real=    0.8447  abs_err= 0.0088  (tol +/-0.10)
+         (before=0.8462)
+[PASS] corr(BTC,BNB)                generated=    0.7892  real=    0.6921  abs_err= 0.0970  (tol +/-0.10)
+         (before=0.9134)
+[PASS] corr(BTC,MATIC)              generated=    0.7249  real=    0.6281  abs_err= 0.0969  (tol +/-0.10)
+         (before=0.8310)
+[PASS] corr(BTC,SOL)                generated=    0.7065  real=    0.6070  abs_err= 0.0994  (tol +/-0.10)
+         (before=0.7170)
+[PASS] corr(ETH,BNB)                generated=    0.7872  real=    0.7248  abs_err= 0.0624  (tol +/-0.10)
+         (before=0.9185)
+[PASS] corr(ETH,MATIC)              generated=    0.7231  real=    0.6748  abs_err= 0.0484  (tol +/-0.10)
+         (before=0.8337)
+[PASS] corr(ETH,SOL)                generated=    0.7064  real=    0.6489  abs_err= 0.0575  (tol +/-0.10)
+         (before=0.7204)
+[PASS] corr(BNB,MATIC)              generated=    0.6839  real=    0.6090  abs_err= 0.0749  (tol +/-0.10)
+         (before=0.9018)
+[PASS] corr(BNB,SOL)                generated=    0.6663  real=    0.5730  abs_err= 0.0933  (tol +/-0.10)
+         (before=0.7779)
+[PASS] corr(MATIC,SOL)              generated=    0.6139  real=    0.5634  abs_err= 0.0505  (tol +/-0.10)
+         (before=0.7077)
+
+Full correlation matrices
+----------------------------------------------------------------------------------------
+GENERATED:
+         BTC    ETH    BNB  MATIC    SOL
+BTC    1.000  0.836  0.789  0.725  0.706
+ETH    0.836  1.000  0.787  0.723  0.706
+BNB    0.789  0.787  1.000  0.684  0.666
+MATIC  0.725  0.723  0.684  1.000  0.614
+SOL    0.706  0.706  0.666  0.614  1.000
+
+REAL:
+         BTC    ETH    BNB  MATIC    SOL
+BTC    1.000  0.845  0.692  0.628  0.607
+ETH    0.845  1.000  0.725  0.675  0.649
+BNB    0.692  0.725  1.000  0.609  0.573
+MATIC  0.628  0.675  0.609  1.000  0.563
+SOL    0.607  0.649  0.573  0.563  1.000
+
+IDIO CHANNEL CHECK (isolated from the factor) -- does the reset hold the level?
+----------------------------------------------------------------------------------------
+Simulated idio_i_t alone for 50000h (seed=123), no beta*factor term.
+coin    raw_persist capped_persist  target_idio_vol realized_idio_vol  rel_err
+BTC         1.00000        0.99500           0.2885            0.2359    18.2%
+ETH         0.98000        0.98000           0.3182            0.3100     2.6%
+BNB         0.99121        0.99121           0.4646            0.4169    10.3%
+MATIC       1.00000        0.99500           0.7686            0.6808    11.4%
+SOL         1.00000        0.99500           0.8330            0.8002     3.9%
+
+(Compare to BTC/MATIC/SOL's raw idio_persistence >= 1.0 in calibration.json --
+ cap_idio_persistence() pulls all of them under PERSISTENCE_CAP; the periodic
+ reset then keeps the long-run realized vol close to target despite that residual
+ near-unit-root shape. This — not the cap alone — is what fixes the correlation
+ inflation: v1.5 had no reset, so realized idio vol drifted well below target.)
+
+ACF REGRESSION ATTRIBUTION: is the periodic reset the cause?
+----------------------------------------------------------------------------------------
+BNB and MATIC's acf_abs_lag1 regressed from PASS (v1.5) to WARN (v2). Tested by
+rerunning each coin's idio channel WITH vs WITHOUT the reset (reset_period > n_hours)
+across 20 seeds (50000h each) -- a single seed turned out to be too
+noisy to trust for a near-unit-root process (see std_diff below).
+coin     mean_acf_with  mean_acf_without  mean_reset_impact  std_diff
+BTC             0.3936            0.4140            -0.0204    0.0428
+ETH             0.2433            0.2529            -0.0096    0.0109
+BNB             0.4014            0.4133            -0.0119    0.0327
+MATIC           0.3173            0.3544            -0.0372    0.0347
+SOL             0.2999            0.3353            -0.0353    0.0350
+
+Largest mean reset impact on idio's own acf_abs_lag1: 0.0372 (MATIC/SOL)
+-- real and systematic (all 5 coins negative), but well under half of the ~0.10
+shortfall seen at the coin level, and the per-seed std (~0.03-0.04) shows single-path
+estimates of this effect are NOT reliable on their own (an earlier single-seed check
+in this development gave a misleadingly large estimate for exactly this reason --
+flagging that here rather than silently using the better number).
+
+So the reset is a real but MINOR contributor. Bigger cause: v1.5's idio variance had
+collapsed (see ann_vol[BNB] WARN in the prior report), so BNB/MATIC's total return was
+dominated by beta*market_factor -- whose own acf_abs_lag1 (~0.31) propped up the
+coin-level acf, coincidentally close to real. v2 restores idio's correct variance
+share (ann_vol back to PASS, see above) -- but mixing two INDEPENDENTLY-timed
+clustering processes (factor + idio) mechanically dilutes the combined series's
+lag-1 |return| autocorrelation below either component's own acf (same aggregation-
+dilution mechanism flagged for kurtosis in the very first v1 report, now showing up
+again for acf on the two highest idio-share coins). Not tuned away, per instructions --
+reported as-is. A secondary, separate finding: the wide per-seed std above means
+different seeds can realize meaningfully different vol-clustering strength for these
+near-unit-root coins -- worth knowing before relying on acf-sensitive fitness signals
+from a single generated world.
+
+========================================================================================
+PURE-REGIME QUALITATIVE CHECK
+----------------------------------------------------------------------------------------
+pure bull      run (5000h, seed=777): realized ann_vol=163.22%  mean_hourly_logret=+0.001853
+pure bear      run (5000h, seed=777): realized ann_vol=209.97%  mean_hourly_logret=-0.001246
+[PASS] bear_vol > bull_vol: True   bear_drift < 0: True   bull_drift > 0: True
+
+========================================================================================
+VALIDATION SUMMARY: 22 PASS, 4 WARN (total 26 checks)
+========================================================================================

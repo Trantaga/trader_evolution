@@ -1,0 +1,71 @@
+CALIBRATION REPORT (TRAIN window -- held-out real data excluded)
+==============================================================================
+TRAIN window: 2020-08-11 06:00:00+00:00 -> 2024-03-10 01:00:00+00:00
+n_hours in window: 31364
+Total returns dropped due to gaps: 150
+Dropped per coin: BTC=30, ETH=30, BNB=30, MATIC=30, SOL=30
+
+PER-COIN STYLIZED FACTS
+------------------------------------------------------------------------------
+coin        mean_hr   ann_vol     kurt   max_dd   t_dof    beta  idio_vol  garch_ok
+BTC        0.000055    64.87%    15.32  -77.20%    7.17    0.29    29.64%      True
+ETH        0.000072    82.91%    12.99  -81.34%    7.24    0.39    32.59%      True
+BNB        0.000096    89.73%    25.97  -72.54%    7.12    0.39    48.20%      True
+MATIC      0.000117   137.29%    21.99  -88.67%    7.28    0.57    80.93%      True
+SOL        0.000120   140.21%    16.63  -96.80%    7.85    0.56    87.53%      True
+
+GARCH(1,1) PARAMETERS
+------------------------------------------------------------------------------
+BTC     omega=7.011e-07  alpha=0.1067  beta=0.8906
+ETH     omega=5.422e-07  alpha=0.0718  beta=0.9262
+BNB     omega=7.923e-07  alpha=0.1074  beta=0.8926
+MATIC   omega=1.050e-06  alpha=0.0846  beta=0.9152
+SOL     omega=1.785e-06  alpha=0.0747  beta=0.9203
+MARKET  omega=4.578e-06  alpha=0.0892  beta=0.9061
+
+MARKET FACTOR (PC1 of standardized returns)
+------------------------------------------------------------------------------
+explained_var_ratio: 72.22%
+ann_vol: 195.73%   excess_kurtosis: 14.97   student_t_dof: 7.67
+
+CORRELATION MATRIX (hourly log returns)
+------------------------------------------------------------------------------
+            BTC     ETH     BNB   MATIC     SOL
+BTC       1.000   0.844   0.687   0.623   0.594
+ETH       0.844   1.000   0.722   0.668   0.641
+BNB       0.687   0.722   1.000   0.603   0.564
+MATIC     0.623   0.668   0.603   1.000   0.553
+SOL       0.594   0.641   0.564   0.553   1.000
+
+REGIMES (trailing_window=168h, bull_thresh=+10%, bear_thresh=-10%)
+------------------------------------------------------------------------------
+regime        share     mean_hr   ann_vol  mean_dur_h
+bull         32.64%    0.001650   186.83%        23.7
+bear         31.07%   -0.001677   237.92%        21.1
+sideways     36.29%   -0.000038   158.91%        12.7
+
+Transition matrix (rows=from, cols=to), order=['bull', 'bear', 'sideways']
+bull           0.958     0.000     0.042
+bear           0.000     0.953     0.047
+sideways       0.038     0.041     0.921
+
+IDIO-RESIDUAL GARCH (v2 — fit on return minus beta*market_factor, not borrowed)
+------------------------------------------------------------------------------
+Sanity: resid ann_vol should match existing idio_vol (same residual, reconstructed).
+coin    resid_ann_vol  idio_vol  vol_match  resid_kurt  resid_acf
+BTC            29.64%    29.64%       True       31.58     0.2948
+ETH            32.59%    32.59%       True       14.45     0.2989
+BNB            48.20%    48.20%       True       39.65     0.3863
+MATIC          80.93%    80.93%       True       48.69     0.3945
+SOL            87.53%    87.53%       True       24.90     0.3487
+
+Idio persistence vs total-return persistence (expect idio << total: the factor
+carries most of the persistence). Stable = idio_persistence < 0.99.
+coin    idio_persist total_persist idio_t_dof idio_garch_ok   status
+BTC          0.98000       0.99729       7.53          True   stable
+ETH          0.98572       0.99801       7.52          True   stable
+BNB          0.98000       1.00000       7.23          True   stable
+MATIC        0.98379       0.99984       6.80          True   stable
+SOL          1.00000       0.99498       6.98          True   still near-unit-root -- will need a reset in generator
+
+==============================================================================

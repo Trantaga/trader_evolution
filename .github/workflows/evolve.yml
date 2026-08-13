@@ -1,0 +1,275 @@
+name: Evolve
+
+# Manually-dispatched, resumable evolution run. A single job runs generations up to a
+# wall-clock budget (default 5.5h, safely under the 6h per-job Actions cap), checkpoints
+# after EVERY completed generation (see checkpoint.py), commits the checkpoint + compact
+# telemetry to a dedicated results branch, and -- if the overall target generation count
+# isn't reached yet -- re-dispatches itself with the same run_id so evolution.run()'s
+# resume path picks up exactly where this job left off. See the bottom of this file for
+# notes on the persistence choice, permissions, and the auto-continue stop condition.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: >
+          Run identifier. Reuse the SAME value across dispatches to resume/continue a
+          run (this is how the auto-continue chain works); leave blank to start a brand
+          new run (an id is generated from the workflow run number + timestamp).
+        required: false
+        type: string
+      population:
+        description: "Population size"
+        required: false
+        default: "100"
+        type: string
+      n_worlds:
+        description: "Worlds evaluated per generation"
+        required: false
+        default: "5"
+        type: string
+      n_generations:
+        description: "Target TOTAL generations for the whole run (across all chained jobs)"
+        required: false
+        default: "50"
+        type: string
+      world_regime_composition:
+        description: >
+          "auto" (the standard composition: one pure bull, one pure bear, one pure
+          sideways, remaining worlds "mix" -- see fitness.build_world_composition), or a
+          comma-separated override of exactly n_worlds entries from
+          {bull,bear,sideways,mix}, e.g. "bull,bear,sideways,mix,mix". Only applies when
+          STARTING a fresh run_id -- ignored on resume (the checkpoint's stored
+          composition is authoritative, like every other config field).
+        required: false
+        default: "auto"
+        type: string
+      master_seed:
+        description: "Master RNG seed (only used when starting a fresh run_id)"
+        required: false
+        default: "0"
+        type: string
+      engine:
+        description: "Evaluator engine"
+        required: false
+        default: "fast"
+        type: choice
+        options:
+          - fast
+          - slow
+      job_budget_hours:
+        description: "Wall-clock budget per job, in hours (stop and checkpoint before this; keep well under 6)"
+        required: false
+        default: "5.5"
+        type: string
+      world_length_hours:
+        description: "Hours per generated world (default 8760 = 1y; shorten for fast throwaway/shakeout runs)"
+        required: false
+        default: "8760"
+        type: string
+      max_generations_per_job:
+        description: >
+          TEST-ONLY additional stop condition: cap this job to at most N generations
+          regardless of the time budget (0 = no cap, use the time budget only). Lets a
+          shakeout run force the job-chaining/resume path deterministically without
+          waiting on the wall-clock timer. Leave at 0 for real runs.
+        required: false
+        default: "0"
+        type: string
+
+# Only one job per run_id at a time -- prevents two dispatches for the same run_id from
+# racing to write/commit the same checkpoint. Does NOT cancel an in-progress run when a
+# duplicate dispatch arrives (cancel-in-progress: false) since killing a job mid-write
+# would just be redone identically on the next resume anyway (see checkpoint.py), but
+# there's no reason to invite two writers to the same branch path concurrently.
+concurrency:
+  group: evolve-${{ github.event.inputs.run_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  evolve:
+    runs-on: ubuntu-latest
+    # Least privilege: contents:write ONLY to commit checkpoint+logs to the results
+    # branch (not to the code branches); actions:write ONLY to re-dispatch the next
+    # chained job. Nothing else in this workflow needs any permission.
+    permissions:
+      contents: write
+      actions: write
+    env:
+      RESULTS_BRANCH: evolution-results
+      # Belt-and-suspenders only: the code is proven hash-order independent (genetics.py
+      # canonicalizes genomes; determinism_test.py verifies cross-process reproducibility
+      # under BOTH unpinned and differing PYTHONHASHSEED). Correctness must not, and does
+      # not, depend on this being set.
+      PYTHONHASHSEED: "0"
+    steps:
+      - name: Determine run_id
+        id: runid
+        run: |
+          if [ -n "${{ github.event.inputs.run_id }}" ]; then
+            echo "run_id=${{ github.event.inputs.run_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_id=evo-${{ github.run_number }}-$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore latest checkpoint for this run_id, if one exists
+        run: |
+          RID="${{ steps.runid.outputs.run_id }}"
+          mkdir -p checkpoints logs/compact
+          git fetch origin "${RESULTS_BRANCH}" 2>/dev/null || true
+          if git cat-file -e "origin/${RESULTS_BRANCH}:runs/${RID}/checkpoint.json" 2>/dev/null; then
+            git show "origin/${RESULTS_BRANCH}:runs/${RID}/checkpoint.json" > "checkpoints/run_${RID}.json"
+            git show "origin/${RESULTS_BRANCH}:runs/${RID}/compact.jsonl" > "logs/compact/run_${RID}.jsonl"
+            echo "Restored existing checkpoint for run_id=${RID}"
+          else
+            echo "No existing checkpoint for run_id=${RID} -- starting fresh"
+          fi
+
+      - name: Run evolution (checkpointed, wall-clock budgeted)
+        run: |
+          python3 -c "
+          from evolution import run
+
+          composition_input = '${{ github.event.inputs.world_regime_composition || \"auto\" }}'
+          composition = None if composition_input == 'auto' else composition_input.split(',')
+
+          max_gens_per_job = int('${{ github.event.inputs.max_generations_per_job || 0 }}')
+
+          result = run(
+              run_id='${{ steps.runid.outputs.run_id }}',
+              pop_size=int('${{ github.event.inputs.population || 100 }}'),
+              n_generations=int('${{ github.event.inputs.n_generations || 50 }}'),
+              n_worlds=int('${{ github.event.inputs.n_worlds || 5 }}'),
+              world_length_hours=int('${{ github.event.inputs.world_length_hours || 8760 }}'),
+              master_seed=int('${{ github.event.inputs.master_seed || 0 }}'),
+              engine='${{ github.event.inputs.engine || \"fast\" }}',
+              max_seconds=float('${{ github.event.inputs.job_budget_hours || 5.5 }}') * 3600,
+              max_generations_this_job=None if max_gens_per_job == 0 else max_gens_per_job,
+              world_regime_composition=composition,
+          )
+          "
+
+      - name: Persist checkpoint + compact telemetry to the results branch
+        run: |
+          RID="${{ steps.runid.outputs.run_id }}"
+          git config user.name "evolve-bot"
+          git config user.email "evolve-bot@users.noreply.github.com"
+          git fetch origin "${RESULTS_BRANCH}" 2>/dev/null || true
+
+          if git show-ref --verify --quiet "refs/remotes/origin/${RESULTS_BRANCH}"; then
+            git worktree add results-wt "origin/${RESULTS_BRANCH}"
+            (cd results-wt && git checkout -B "${RESULTS_BRANCH}")
+          else
+            git worktree add --detach results-wt
+            (cd results-wt && git checkout --orphan "${RESULTS_BRANCH}" && git rm -rf --quiet . 2>/dev/null || true)
+          fi
+
+          mkdir -p "results-wt/runs/${RID}"
+          cp "checkpoints/run_${RID}.json" "results-wt/runs/${RID}/checkpoint.json"
+          cp "logs/compact/run_${RID}.jsonl" "results-wt/runs/${RID}/compact.jsonl"
+
+          cd results-wt
+          git add "runs/${RID}/"
+          git commit -m "evolve: run_id=${RID}, gen ${{ github.run_number }}" || echo "nothing new to commit"
+          git push origin "HEAD:${RESULTS_BRANCH}"
+          cd ..
+          git worktree remove results-wt --force
+
+      - name: Decide DONE vs NOT_DONE and act accordingly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RID="${{ steps.runid.outputs.run_id }}"
+          DONE=$(python3 -c "
+          import checkpoint
+          state = checkpoint.load_checkpoint('${RID}')
+          print(state['done'])
+          ")
+          echo "Run status for ${RID}: done=${DONE}"
+
+          if [ "$DONE" = "False" ]; then
+            echo "Target generation count not reached yet -- re-dispatching for the next job."
+            # GUARD against infinite loops: this branch only fires when done=False, which
+            # checkpoint.py only sets once last_completed_gen == n_generations-1 -- a
+            # monotonically increasing counter restored from the checkpoint each time, so
+            # this can only re-trigger a bounded number of times (proportional to
+            # n_generations / generations-per-budget-window), never indefinitely. It also
+            # never re-triggers on a FAILED run step, since this step only runs if the
+            # prior steps succeeded (default job step behavior: a failed step stops the job).
+            gh workflow run evolve.yml \
+              -f run_id="${RID}" \
+              -f population="${{ github.event.inputs.population || 100 }}" \
+              -f n_worlds="${{ github.event.inputs.n_worlds || 5 }}" \
+              -f n_generations="${{ github.event.inputs.n_generations || 50 }}" \
+              -f world_regime_composition="${{ github.event.inputs.world_regime_composition || 'auto' }}" \
+              -f master_seed="${{ github.event.inputs.master_seed || 0 }}" \
+              -f engine="${{ github.event.inputs.engine || 'fast' }}" \
+              -f job_budget_hours="${{ github.event.inputs.job_budget_hours || 5.5 }}" \
+              -f world_length_hours="${{ github.event.inputs.world_length_hours || 8760 }}" \
+              -f max_generations_per_job="${{ github.event.inputs.max_generations_per_job || 0 }}"
+          else
+            echo "Run is DONE -- not re-triggering."
+          fi
+          echo "done=${DONE}" >> "$GITHUB_ENV"
+
+      - name: Upload final artifact (best genome + full compact JSONL) once done
+        if: env.done == 'True'
+        uses: actions/upload-artifact@v4
+        with:
+          name: evolve-${{ steps.runid.outputs.run_id }}-final
+          path: |
+            checkpoints/run_${{ steps.runid.outputs.run_id }}.json
+            logs/compact/run_${{ steps.runid.outputs.run_id }}.jsonl
+          retention-days: 90
+
+# --------------------------------------------------------------------------------------
+# NOTES
+# --------------------------------------------------------------------------------------
+# Persistence choice: (a) commit to a dedicated `evolution-results` branch, not (b)
+# artifact hand-off. Reasoning: a long run can span many chained jobs over an unbounded
+# number of days (bounded only by n_generations / job_budget_hours); GitHub Actions
+# artifacts expire (a fixed retention window, 90 days max) and aren't trivially
+# addressable from a FRESH workflow_dispatch invocation without extra plumbing to look up
+# the right artifact ID from a prior run -- a git branch has no expiry, is trivially
+# addressable by run_id (a path), and gives a durable, human-inspectable, versioned
+# history of every generation's telemetry for free via git log. The tradeoff is the extra
+# `contents: write` permission and the worktree dance above, which is worth it for the
+# robustness. checkpoint.py's atomic rewrite of the compact JSONL (full overwrite from
+# the checkpoint's embedded records, not append) means each commit's compact.jsonl is
+# always a complete, non-duplicated history up to that point, regardless of how many
+# times a generation was interrupted and resumed before landing.
+#
+# Permissions: contents:write (commit to evolution-results) and actions:write (re-
+# dispatch the next job) are the ONLY two this workflow needs; both are scoped at the job
+# level, not repo-wide defaults. No other permission (issues, pull-requests, packages,
+# etc.) is requested.
+#
+# Auto-continue stop condition: evolution.run() returns done=True exactly when
+# last_completed_gen == n_generations-1 (the checkpoint-embedded target), which is a
+# monotonically-increasing counter restored fresh from the checkpoint on every resume --
+# so the re-dispatch loop is bounded by construction (each hop makes strictly forward
+# progress or the job fails outright, which stops the chain since the re-dispatch step
+# only runs after a successful run+persist). The "trigger next job" step only executes
+# when the DONE check reads False, and only after the run+persist steps succeeded.
+#
+# On `gh workflow run` triggering via the default GITHUB_TOKEN: GitHub's actions-
+# triggering-actions safeguard specifically prevents a GITHUB_TOKEN-authored PUSH from
+# re-triggering `on: push`/`on: pull_request` workflows, to stop infinite loops -- it does
+# NOT block an explicit `workflow_dispatch` API call (what `gh workflow run` makes) using
+# the default token, which is exactly what's used here. If GitHub's behavior around this
+# ever changes (or org policy restricts it), the fallback is a fine-grained PAT with
+# `actions: write` stored as a repo secret (e.g. `WORKFLOW_DISPATCH_TOKEN`) used in place
+# of `github.token` for that one step -- noted here rather than pre-emptively added, to
+# keep the default path on the least-privilege built-in token.

@@ -1,0 +1,241 @@
+{
+  "meta": {
+    "window_start": "2020-08-11T06:00:00+00:00",
+    "window_end": "2024-03-10T01:00:00+00:00",
+    "n_hours": 31364,
+    "n_returns_dropped_to_gaps": 150,
+    "coins": [
+      "BTC",
+      "ETH",
+      "BNB",
+      "MATIC",
+      "SOL"
+    ],
+    "hours_per_year": 8760,
+    "split": {
+      "train_start": "2020-08-11T06:00:00+00:00",
+      "train_end": "2024-03-10T01:00:00+00:00",
+      "heldout_start": "2024-03-10T02:00:00+00:00",
+      "heldout_end": "2024-09-10T02:00:00+00:00",
+      "held_out_months": 6
+    }
+  },
+  "coins": {
+    "BTC": {
+      "mean_hourly_logret": 5.5225314036738116e-05,
+      "ann_vol": 0.6486736137574481,
+      "excess_kurtosis": 15.320769177826456,
+      "max_drawdown": -0.7719848663243954,
+      "student_t_dof": 7.173828125000012,
+      "garch": {
+        "omega": 7.010615498656088e-07,
+        "alpha": 0.10670054553848239,
+        "beta": 0.8905881381950193,
+        "converged": true
+      },
+      "beta_to_market": 0.29478848398580165,
+      "idio_vol": 0.2964155381708382,
+      "idio_garch": {
+        "omega": 2.0059216239138685e-07,
+        "alpha": 0.1,
+        "beta": 0.88
+      },
+      "idio_student_t_dof": 7.531250000000014,
+      "idio_persistence": 0.98,
+      "idio_garch_ok": true
+    },
+    "ETH": {
+      "mean_hourly_logret": 7.24237788290056e-05,
+      "ann_vol": 0.8291049141274389,
+      "excess_kurtosis": 12.991558207370584,
+      "max_drawdown": -0.813430141271089,
+      "student_t_dof": 7.237402343750013,
+      "garch": {
+        "omega": 5.422088632912197e-07,
+        "alpha": 0.0718418553686077,
+        "beta": 0.9261675306762835,
+        "converged": true
+      },
+      "beta_to_market": 0.3894946889908433,
+      "idio_vol": 0.3259265180221541,
+      "idio_garch": {
+        "omega": 1.7313737579106157e-07,
+        "alpha": 0.08648713113532848,
+        "beta": 0.8992348051121233
+      },
+      "idio_student_t_dof": 7.515429687500014,
+      "idio_persistence": 0.9857219362474517,
+      "idio_garch_ok": true
+    },
+    "BNB": {
+      "mean_hourly_logret": 9.624576292415817e-05,
+      "ann_vol": 0.8973386156084997,
+      "excess_kurtosis": 25.968738563758684,
+      "max_drawdown": -0.725380725497647,
+      "student_t_dof": 7.122558593750012,
+      "garch": {
+        "omega": 7.923354446801121e-07,
+        "alpha": 0.10736094584327102,
+        "beta": 0.8926390541581958,
+        "converged": true
+      },
+      "beta_to_market": 0.3867200369682633,
+      "idio_vol": 0.48195504100486874,
+      "idio_garch": {
+        "omega": 5.303042197683503e-07,
+        "alpha": 0.1,
+        "beta": 0.88
+      },
+      "idio_student_t_dof": 7.2273437500000135,
+      "idio_persistence": 0.98,
+      "idio_garch_ok": true
+    },
+    "MATIC": {
+      "mean_hourly_logret": 0.0001172701297691484,
+      "ann_vol": 1.3728813803269528,
+      "excess_kurtosis": 21.993428360369464,
+      "max_drawdown": -0.8867403314917127,
+      "student_t_dof": 7.283886718750013,
+      "garch": {
+        "omega": 1.0503333026713564e-06,
+        "alpha": 0.08461334325579634,
+        "beta": 0.9152288762287654,
+        "converged": true
+      },
+      "beta_to_market": 0.5665725751183975,
+      "idio_vol": 0.8093414193292893,
+      "idio_garch": {
+        "omega": 1.2146828519651546e-06,
+        "alpha": 0.162,
+        "beta": 0.8217895373344091
+      },
+      "idio_student_t_dof": 6.803808593750013,
+      "idio_persistence": 0.9837895373344091,
+      "idio_garch_ok": true
+    },
+    "SOL": {
+      "mean_hourly_logret": 0.00012039839379109416,
+      "ann_vol": 1.4021146388254548,
+      "excess_kurtosis": 16.62646228316386,
+      "max_drawdown": -0.9679616158489398,
+      "student_t_dof": 7.848632812500015,
+      "garch": {
+        "omega": 1.7845924856571417e-06,
+        "alpha": 0.07466271854231639,
+        "beta": 0.9203168887634964,
+        "converged": true
+      },
+      "beta_to_market": 0.5596165468865544,
+      "idio_vol": 0.8753096869369461,
+      "idio_garch": {
+        "omega": 3.2068906633275826e-07,
+        "alpha": 0.07457359482650802,
+        "beta": 0.9254264250061885
+      },
+      "idio_student_t_dof": 6.982031250000012,
+      "idio_persistence": 1.0000000198326966,
+      "idio_garch_ok": true
+    }
+  },
+  "market_factor": {
+    "mean_hourly_logret": -9.921247467368073e-20,
+    "ann_vol": 1.9572953058454656,
+    "excess_kurtosis": 14.974273111491552,
+    "explained_var_ratio": 0.7221861739973136,
+    "garch": {
+      "omega": 4.577949533323251e-06,
+      "alpha": 0.08915346310461905,
+      "beta": 0.9061056053361505,
+      "converged": true
+    },
+    "student_t_dof": 7.673828125000014
+  },
+  "correlation_matrix": {
+    "BTC": {
+      "BTC": 1.0,
+      "ETH": 0.843820810025044,
+      "BNB": 0.6867521124541855,
+      "MATIC": 0.6230088710129841,
+      "SOL": 0.5939292955199064
+    },
+    "ETH": {
+      "BTC": 0.843820810025044,
+      "ETH": 1.0,
+      "BNB": 0.722474001948034,
+      "MATIC": 0.6683515619503997,
+      "SOL": 0.6411614910438747
+    },
+    "BNB": {
+      "BTC": 0.6867521124541855,
+      "ETH": 0.722474001948034,
+      "BNB": 1.0,
+      "MATIC": 0.6028456426360126,
+      "SOL": 0.5635673002642972
+    },
+    "MATIC": {
+      "BTC": 0.6230088710129841,
+      "ETH": 0.6683515619503997,
+      "BNB": 0.6028456426360126,
+      "MATIC": 1.0,
+      "SOL": 0.5527004381045466
+    },
+    "SOL": {
+      "BTC": 0.5939292955199064,
+      "ETH": 0.6411614910438747,
+      "BNB": 0.5635673002642972,
+      "MATIC": 0.5527004381045466,
+      "SOL": 1.0
+    }
+  },
+  "regimes": {
+    "labels": [
+      "bull",
+      "bear",
+      "sideways"
+    ],
+    "params": {
+      "bull": {
+        "mean_hourly_logret": 0.0016497461872538948,
+        "ann_vol": 1.8683321493084677,
+        "share_of_time": 0.3263880025526484
+      },
+      "bear": {
+        "mean_hourly_logret": -0.0016772425370710185,
+        "ann_vol": 2.379186658248563,
+        "share_of_time": 0.310721123165284
+      },
+      "sideways": {
+        "mean_hourly_logret": -3.825438009414421e-05,
+        "ann_vol": 1.5891367149963909,
+        "share_of_time": 0.3628908742820676
+      }
+    },
+    "transition_matrix": [
+      [
+        0.9578607743449354,
+        0.0,
+        0.042139225655064526
+      ],
+      [
+        0.0,
+        0.9526596837132881,
+        0.04734031628671185
+      ],
+      [
+        0.03798470060670008,
+        0.04053459949002022,
+        0.9214806999032797
+      ]
+    ],
+    "mean_duration_hours": {
+      "bull": 23.730858468677475,
+      "bear": 21.12364425162689,
+      "sideways": 12.735722284434498
+    },
+    "config": {
+      "trailing_window_hours": 168,
+      "bull_threshold": 0.1,
+      "bear_threshold": 0.1
+    }
+  }
+}
