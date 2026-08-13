@@ -142,7 +142,7 @@ jobs:
           python3 -c "
           from evolution import run
 
-          composition_input = '${{ github.event.inputs.world_regime_composition || \"auto\" }}'
+          composition_input = '${{ github.event.inputs.world_regime_composition || 'auto' }}'
           composition = None if composition_input == 'auto' else composition_input.split(',')
 
           max_gens_per_job = int('${{ github.event.inputs.max_generations_per_job || 0 }}')
@@ -154,7 +154,7 @@ jobs:
               n_worlds=int('${{ github.event.inputs.n_worlds || 5 }}'),
               world_length_hours=int('${{ github.event.inputs.world_length_hours || 8760 }}'),
               master_seed=int('${{ github.event.inputs.master_seed || 0 }}'),
-              engine='${{ github.event.inputs.engine || \"fast\" }}',
+              engine='${{ github.event.inputs.engine || 'fast' }}',
               max_seconds=float('${{ github.event.inputs.job_budget_hours || 5.5 }}') * 3600,
               max_generations_this_job=None if max_gens_per_job == 0 else max_gens_per_job,
               world_regime_composition=composition,
