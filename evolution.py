@@ -54,6 +54,24 @@ AGGREGATOR_FUNCS = {"mean": np.mean, "min": np.min}
 # and write a final checkpoint so the next job can pick up exactly where this left off.
 DEFAULT_JOB_BUDGET_SECONDS = 5.5 * 3600
 
+# Plateau early-stop (run() only -- see run()'s docstring). Whichever of this or the
+# n_generations hard cap triggers first ends the run (DONE, no re-dispatch).
+PLATEAU_PATIENCE = 40           # generations without a "significant" improvement before stopping
+PLATEAU_MIN_IMPROVEMENT = 0.01  # >=1% relative improvement in best_fitness counts as progress
+PLATEAU_EPS = 1e-9              # floors the relative-improvement denominator (see
+                                  # _is_significant_improvement) so a near-zero baseline doesn't
+                                  # divide by ~0 -- fitness can be negative or near zero, so
+                                  # "relative" is measured against abs(baseline), a documented
+                                  # design choice since the task didn't pin down the sign convention
+
+
+def _is_significant_improvement(new_value, baseline):
+    """>= PLATEAU_MIN_IMPROVEMENT relative improvement, using abs(baseline) as the
+    denominator so this stays well-defined when baseline is negative or ~0 (fitness is a
+    Sortino-based score and can be either)."""
+    denom = max(abs(baseline), PLATEAU_EPS)
+    return (new_value - baseline) / denom >= PLATEAU_MIN_IMPROVEMENT
+
 
 # --------------------------------------------------------------------------------------
 # Shared per-generation logic (used by both run_evolution() and run())
@@ -88,14 +106,35 @@ def _evaluate_population(population, worlds, engine, aggregator, params=None):
     raise ValueError(f"unknown engine {engine!r}, expected 'slow' or 'fast'")
 
 
+def _resolve_world_length(regime, world_length_hours, pure_world_length_hours, mix_world_length_hours):
+    """world_length_hours is the uniform default/fallback (unchanged, backward-compatible
+    behavior for every existing caller that doesn't pass an override). pure_world_length_
+    hours/mix_world_length_hours, if given (not None), override it specifically for
+    "pure" (bull/bear/sideways) vs "mix" worlds -- e.g. real runs want SHORT pure worlds
+    (a clean, undiluted regime read) and LONG mix worlds (multiple regime transitions per
+    world). "pure" here means any regime string other than "mix"."""
+    if regime == "mix":
+        return mix_world_length_hours if mix_world_length_hours is not None else world_length_hours
+    return pure_world_length_hours if pure_world_length_hours is not None else world_length_hours
+
+
 def _run_one_generation(gen, population, master_rng, n_worlds, world_length_hours,
-                         composition, engine, aggregator, run_id, write_logs):
-    """Draws this generation's world seeds from master_rng, evaluates the full
-    population, and writes telemetry. Returns (eval_results, fitnesses, record,
-    world_seeds, best_genome_this_gen). Consumes exactly n_worlds draws from master_rng.
+                         composition, engine, aggregator, run_id, write_logs,
+                         pure_world_length_hours=None, mix_world_length_hours=None):
+    """Draws this generation's world seeds from master_rng and evaluates the full
+    population (writing the FULL per-generation log, if requested). Returns
+    (eval_results, fitnesses, world_seeds, best_genome_this_gen, best_fitness_this_gen).
+    Consumes exactly n_worlds draws from master_rng.
+
+    Does NOT build the compact record or print the console line itself -- callers do
+    that (see run_evolution()/run()) because run()'s record needs extra per-caller state
+    (plateau tracking) that only the caller holds across generations.
     """
     world_seeds = [int(master_rng.integers(0, 2 ** 31 - 1)) for _ in range(n_worlds)]
-    worlds = [generate_world(seed, world_length_hours, regime)
+    worlds = [generate_world(seed,
+                              _resolve_world_length(regime, world_length_hours,
+                                                     pure_world_length_hours, mix_world_length_hours),
+                              regime)
               for seed, regime in zip(world_seeds, composition)]
 
     # Hot spot when engine="slow": a naive per-genome, per-world simulate() call.
@@ -109,10 +148,8 @@ def _run_one_generation(gen, population, master_rng, n_worlds, world_length_hour
     if write_logs:
         telemetry.write_full_log(run_id, gen, population, fitnesses, eval_results,
                                   best_genome, world_seeds, composition)
-    record = telemetry.compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, composition)
-    telemetry.print_console_line(gen, record)
 
-    return eval_results, fitnesses, record, world_seeds, best_genome, float(fitnesses[best_idx])
+    return eval_results, fitnesses, world_seeds, best_genome, float(fitnesses[best_idx])
 
 
 def _build_next_generation(population, fitnesses, elite_n, pop_size, master_rng):
@@ -156,9 +193,12 @@ def run_evolution(pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WOR
     history = []
 
     for gen in range(n_generations):
-        eval_results, fitnesses, record, world_seeds, best_genome, best_fitness = _run_one_generation(
+        eval_results, fitnesses, world_seeds, best_genome, best_fitness = _run_one_generation(
             gen, population, master_rng, n_worlds, world_length_hours, composition,
             engine, aggregator, run_id, write_logs)
+
+        record = telemetry.compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, composition)
+        telemetry.print_console_line(gen, record)
 
         if write_logs:
             telemetry.append_compact(run_id, record)
@@ -183,7 +223,8 @@ def run_evolution(pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WOR
 # Entry point 2: run() -- checkpoint-aware, resumable, wall-clock-budgeted
 # --------------------------------------------------------------------------------------
 def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLDS,
-        world_length_hours=WORLD_LENGTH_HOURS, n_genes_init=N_GENES_INIT, elite_n=ELITE_N,
+        world_length_hours=WORLD_LENGTH_HOURS, pure_world_length_hours=None, mix_world_length_hours=None,
+        n_genes_init=N_GENES_INIT, elite_n=ELITE_N,
         master_seed=MASTER_SEED, engine=ENGINE, aggregator_name=AGGREGATOR_NAME,
         max_seconds=DEFAULT_JOB_BUDGET_SECONDS, max_generations_this_job=None,
         world_regime_composition=None):
@@ -199,6 +240,18 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
     contain only "bull"/"bear"/"sideways"/"mix". Ignored on resume (the checkpoint's
     stored composition is authoritative, same as every other config field).
 
+    pure_world_length_hours / mix_world_length_hours: on a FRESH start only, optionally
+    override world_length_hours specifically for "pure" (bull/bear/sideways) vs "mix"
+    worlds (e.g. short pure worlds for a clean regime read, long mix worlds to see
+    several regime transitions per world). None (the default) means "use
+    world_length_hours uniformly for that world type" -- fully backward compatible with
+    every existing caller. Ignored on resume (checkpoint's stored values are authoritative).
+
+    Also stops early (DONE) if the PLATEAU criterion fires: PLATEAU_PATIENCE generations
+    pass without a >=PLATEAU_MIN_IMPROVEMENT relative improvement in best_fitness. This
+    plateau state (plateau_best_fitness, generations_since_improvement) is checkpointed
+    and restored on resume, same as everything else -- see checkpoint.py's schema.
+
     Returns {"done": bool, "last_completed_gen": int, "best_fitness": float,
              "best_genome": genome, "compact_records": [...], "checkpoint_path": str}.
     Prints a final "RUN_STATUS: DONE" or "RUN_STATUS: NOT_DONE" line for the calling
@@ -213,6 +266,10 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         cfg = state["config"]
         pop_size, n_generations = cfg["pop_size"], cfg["n_generations"]
         n_worlds, world_length_hours = cfg["n_worlds"], cfg["world_length_hours"]
+        # .get(): tolerates resuming a pre-per-regime-length checkpoint (absent -> None
+        # -> falls back to the uniform world_length_hours, i.e. old behavior).
+        pure_world_length_hours = cfg.get("pure_world_length_hours")
+        mix_world_length_hours = cfg.get("mix_world_length_hours")
         n_genes_init, elite_n = cfg["n_genes_init"], cfg["elite_n"]
         master_seed, engine = cfg["master_seed"], cfg["engine"]
         aggregator_name = cfg["aggregator_name"]
@@ -225,8 +282,14 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         best_genome = checkpoint.restore_best_genome(state)
         best_fitness = state["best_fitness"]
         best_gen = state["best_gen"]
+        # .get() with a safe default: tolerates resuming from a schema-v1 checkpoint
+        # (written before the plateau criterion existed) without crashing -- it just
+        # restarts the plateau counter from this point rather than losing the whole run.
+        plateau_best_fitness = state.get("plateau_best_fitness")
+        generations_since_improvement = state.get("generations_since_improvement", 0)
         print(f"Resuming run_id={run_id} from checkpoint: last_completed_gen={last_completed_gen}, "
-              f"{len(compact_records)} compact records loaded.")
+              f"{len(compact_records)} compact records loaded, "
+              f"generations_since_improvement={generations_since_improvement}.")
         if state["done"]:
             print("Checkpoint already marks this run DONE -- nothing to do.")
             print("RUN_STATUS: DONE")
@@ -249,13 +312,16 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         compact_records = []
         last_completed_gen = -1
         best_genome, best_fitness, best_gen = None, float("-inf"), -1
+        plateau_best_fitness, generations_since_improvement = None, 0
         print(f"Starting fresh run_id={run_id}: pop={pop_size} n_generations={n_generations} "
               f"n_worlds={n_worlds} engine={engine}")
 
     aggregator = AGGREGATOR_FUNCS[aggregator_name]
     config = {
         "pop_size": pop_size, "n_generations": n_generations, "n_worlds": n_worlds,
-        "world_length_hours": world_length_hours, "n_genes_init": n_genes_init,
+        "world_length_hours": world_length_hours,
+        "pure_world_length_hours": pure_world_length_hours, "mix_world_length_hours": mix_world_length_hours,
+        "n_genes_init": n_genes_init,
         "elite_n": elite_n, "master_seed": master_seed, "engine": engine,
         "aggregator_name": aggregator_name, "world_regime_composition": composition,
     }
@@ -273,18 +339,47 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
                   f"stopping before generation {gen}.")
             break
 
-        eval_results, fitnesses, record, world_seeds, gen_best_genome, gen_best_fitness = _run_one_generation(
+        eval_results, fitnesses, world_seeds, gen_best_genome, gen_best_fitness = _run_one_generation(
             gen, population, master_rng, n_worlds, world_length_hours, composition,
-            engine, aggregator, run_id, write_logs=True)
+            engine, aggregator, run_id, write_logs=True,
+            pure_world_length_hours=pure_world_length_hours, mix_world_length_hours=mix_world_length_hours)
 
-        compact_records.append(record)
         last_completed_gen = gen
         gens_run_this_job += 1
 
         if gen_best_fitness > best_fitness:
             best_genome, best_fitness, best_gen = gen_best_genome, gen_best_fitness, gen
 
-        done = gen == n_generations - 1
+        # -- plateau tracking (see PLATEAU_PATIENCE/PLATEAU_MIN_IMPROVEMENT above) --
+        if plateau_best_fitness is None:
+            # first generation this run has ever seen (fresh start, or resuming a
+            # schema-v1 checkpoint with no prior plateau state): establishes the
+            # baseline: nothing to compare against yet, so it's not "no improvement".
+            plateau_best_fitness = gen_best_fitness
+            generations_since_improvement = 0
+        elif _is_significant_improvement(gen_best_fitness, plateau_best_fitness):
+            plateau_best_fitness = gen_best_fitness
+            generations_since_improvement = 0
+        else:
+            generations_since_improvement += 1
+        plateaued = generations_since_improvement >= PLATEAU_PATIENCE
+
+        hit_cap = gen == n_generations - 1
+        done = hit_cap or plateaued
+        stop_reason = "n_generations_cap" if hit_cap else ("plateau" if plateaued else None)
+
+        record = telemetry.compact_record(
+            gen, fitnesses, eval_results, gen_best_genome, world_seeds, composition,
+            generations_since_improvement=generations_since_improvement,
+            best_fitness_so_far=plateau_best_fitness, stop_reason=stop_reason)
+        telemetry.print_console_line(gen, record)
+        compact_records.append(record)
+
+        if plateaued and not hit_cap:
+            print(f"Plateau reached: no >={PLATEAU_MIN_IMPROVEMENT:.0%} relative improvement in "
+                  f"best_fitness for {generations_since_improvement} generations "
+                  f"(patience={PLATEAU_PATIENCE}) -- stopping early.")
+
         if not done:
             population = _build_next_generation(population, fitnesses, elite_n, pop_size, master_rng)
 
@@ -292,7 +387,8 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         # fully built -- see checkpoint.py's docstring for why this specific point
         # guarantees correct mid-generation-kill resume.
         ckpt_path = checkpoint.save_checkpoint(run_id, config, last_completed_gen, done, master_rng,
-                                                population, compact_records, best_genome, best_fitness, best_gen)
+                                                population, compact_records, best_genome, best_fitness, best_gen,
+                                                plateau_best_fitness, generations_since_improvement)
 
     status = "DONE" if done else "NOT_DONE"
     print(f"\nrun_id={run_id}: completed generation {last_completed_gen}/{n_generations - 1} "

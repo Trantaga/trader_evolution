@@ -61,7 +61,13 @@ def write_full_log(run_id, gen, population, fitnesses, eval_results, best_genome
     return path
 
 
-def compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, world_regimes):
+def compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, world_regimes,
+                    generations_since_improvement=None, best_fitness_so_far=None, stop_reason=None):
+    """generations_since_improvement/best_fitness_so_far/stop_reason are the plateau
+    early-stop criterion's state (see evolution.py's PLATEAU_PATIENCE/
+    PLATEAU_MIN_IMPROVEMENT) -- optional/None for callers that don't track it (e.g.
+    run_evolution()'s legacy no-checkpoint path), so this stays backward compatible.
+    """
     fitnesses = np.asarray(fitnesses, dtype=float)
     n_trades = np.array([r["mean_n_trades"] for r in eval_results])
     max_dds = np.array([r["mean_max_drawdown"] for r in eval_results])
@@ -82,6 +88,9 @@ def compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, world
         "diversity": {"std_n_trades": float(n_trades.std()), "std_cash_frac": float(cash_fracs.std())},
         "world_seeds": world_seeds,
         "world_regimes": world_regimes,
+        "generations_since_improvement": generations_since_improvement,
+        "best_fitness_so_far": best_fitness_so_far,
+        "stop_reason": stop_reason,
     }
 
 
@@ -94,7 +103,10 @@ def append_compact(run_id, record):
 
 
 def print_console_line(gen, record):
+    plateau_str = ""
+    if record.get("generations_since_improvement") is not None:
+        plateau_str = f"  since_improvement={record['generations_since_improvement']:3d}"
     print(f"gen={gen:3d}  best={record['best_fitness']:+8.4f}  median={record['median_fitness']:+8.4f}  "
           f"worst={record['worst_fitness']:+8.4f}  "
           f"diversity(std_n_trades)={record['diversity']['std_n_trades']:6.2f}  "
-          f"frac_degenerate={record['frac_degenerate']:.2f}")
+          f"frac_degenerate={record['frac_degenerate']:.2f}{plateau_str}")

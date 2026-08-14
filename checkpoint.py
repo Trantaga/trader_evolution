@@ -28,7 +28,15 @@ CHECKPOINT SCHEMA (JSON, one file per run_id):
     duplicate a generation across a resume -- see save_checkpoint().
   best_genome / best_fitness / best_gen: the best genome seen across ALL completed
     generations (not just the current one), canonical-order gene list + its fitness +
-    which generation it was found in.
+    which generation it was found in. Updates on ANY strict improvement, unlike
+    plateau_best_fitness below.
+  plateau_best_fitness / generations_since_improvement: state for the plateau early-stop
+    criterion (see evolution.py's PLATEAU_PATIENCE/PLATEAU_MIN_IMPROVEMENT). Distinct from
+    best_fitness above: plateau_best_fitness only advances on a >= PLATEAU_MIN_IMPROVEMENT
+    RELATIVE jump (not any improvement), and generations_since_improvement counts
+    consecutive generations without such a jump. *** MUST be restored on resume -- if
+    reset to 0 every job, the patience counter never reaches PLATEAU_PATIENCE across a
+    multi-job chained run and the criterion silently never fires. ***
 
 Why checkpoint only after a FULLY completed generation, never mid-generation: this is
 what makes the "kill mid-generation" resume case correct for free. If the process dies
@@ -46,7 +54,7 @@ import tempfile
 import numpy as np
 
 CHECKPOINT_DIR = "checkpoints"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2  # v2 adds plateau_best_fitness/generations_since_improvement
 
 
 def checkpoint_path(run_id):
@@ -81,7 +89,8 @@ def _genome_from_json(rows):
 
 
 def save_checkpoint(run_id, config, last_completed_gen, done, master_rng, population,
-                     compact_records, best_genome, best_fitness, best_gen):
+                     compact_records, best_genome, best_fitness, best_gen,
+                     plateau_best_fitness, generations_since_improvement):
     """Atomically write the checkpoint AND (re)write the standalone compact JSONL file
     from the SAME compact_records list, atomically. Both writes use the identical data
     source, so a resume can never duplicate, skip, or desync a generation's record
@@ -99,6 +108,8 @@ def save_checkpoint(run_id, config, last_completed_gen, done, master_rng, popula
         "best_genome": _genome_to_json(best_genome) if best_genome is not None else None,
         "best_fitness": best_fitness,
         "best_gen": best_gen,
+        "plateau_best_fitness": plateau_best_fitness,
+        "generations_since_improvement": generations_since_improvement,
     }
     _atomic_write(checkpoint_path(run_id), lambda f: json.dump(state, f))
 

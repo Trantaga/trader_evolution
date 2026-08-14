@@ -63,9 +63,25 @@ on:
         default: "5.5"
         type: string
       world_length_hours:
-        description: "Hours per generated world (default 8760 = 1y; shorten for fast throwaway/shakeout runs)"
+        description: >
+          Uniform hours per generated world, used for BOTH pure and mix worlds UNLESS
+          overridden below (default 8760 = 1y; shorten for fast throwaway/shakeout runs).
         required: false
         default: "8760"
+        type: string
+      pure_world_length_hours:
+        description: >
+          Override world_length_hours specifically for PURE (bull/bear/sideways) worlds
+          -- e.g. a short, clean single-regime read. Blank = use world_length_hours.
+        required: false
+        default: ""
+        type: string
+      mix_world_length_hours:
+        description: >
+          Override world_length_hours specifically for MIX worlds -- e.g. a long window
+          to see several regime transitions per world. Blank = use world_length_hours.
+        required: false
+        default: ""
         type: string
       max_generations_per_job:
         description: >
@@ -147,12 +163,19 @@ jobs:
 
           max_gens_per_job = int('${{ github.event.inputs.max_generations_per_job || 0 }}')
 
+          pure_hours_input = '${{ github.event.inputs.pure_world_length_hours }}'
+          mix_hours_input = '${{ github.event.inputs.mix_world_length_hours }}'
+          pure_world_length_hours = int(pure_hours_input) if pure_hours_input.strip() else None
+          mix_world_length_hours = int(mix_hours_input) if mix_hours_input.strip() else None
+
           result = run(
               run_id='${{ steps.runid.outputs.run_id }}',
               pop_size=int('${{ github.event.inputs.population || 100 }}'),
               n_generations=int('${{ github.event.inputs.n_generations || 50 }}'),
               n_worlds=int('${{ github.event.inputs.n_worlds || 5 }}'),
               world_length_hours=int('${{ github.event.inputs.world_length_hours || 8760 }}'),
+              pure_world_length_hours=pure_world_length_hours,
+              mix_world_length_hours=mix_world_length_hours,
               master_seed=int('${{ github.event.inputs.master_seed || 0 }}'),
               engine='${{ github.event.inputs.engine || 'fast' }}',
               max_seconds=float('${{ github.event.inputs.job_budget_hours || 5.5 }}') * 3600,
@@ -218,6 +241,8 @@ jobs:
               -f engine="${{ github.event.inputs.engine || 'fast' }}" \
               -f job_budget_hours="${{ github.event.inputs.job_budget_hours || 5.5 }}" \
               -f world_length_hours="${{ github.event.inputs.world_length_hours || 8760 }}" \
+              -f pure_world_length_hours="${{ github.event.inputs.pure_world_length_hours }}" \
+              -f mix_world_length_hours="${{ github.event.inputs.mix_world_length_hours }}" \
               -f max_generations_per_job="${{ github.event.inputs.max_generations_per_job || 0 }}"
           else
             echo "Run is DONE -- not re-triggering."
