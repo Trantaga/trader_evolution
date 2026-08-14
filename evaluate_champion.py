@@ -15,11 +15,15 @@ its power as an unbiased judge. This script must never be called from evolution.
 fitness.py, or any training/selection loop.
 
 Run: python3 evaluate_champion.py <run_id | checkpoint.json path | bare genome.json path>
+                                   [--dump-json PATH]
+--dump-json only controls WHERE the results are additionally saved (as JSON, for a
+dashboard) -- it changes no measurement logic and adds no other input. Console printing
+is unaffected either way.
 """
 
+import argparse
 import json
 import os
-import sys
 
 import numpy as np
 import pandas as pd
@@ -187,11 +191,48 @@ def print_table(rows):
               f"{r['max_drawdown']:>14.2%}{r['n_trades']:>10}{r['final_value']:>13.2f}")
 
 
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="ONE-SHOT champion evaluation on the locked held-out real data.")
+    p.add_argument("source", help="run_id | checkpoint.json path | bare genome.json path")
+    p.add_argument("--dump-json", default=None, metavar="PATH",
+                    help="optional: also write full results (verdict + every row's full "
+                         "equity_curve) as JSON to PATH, for a dashboard. Does not affect "
+                         "the evaluation itself -- console output is unchanged either way.")
+    return p.parse_args()
+
+
+def build_json_dump(world, rows, verdict):
+    """rows: the SAME list of result dicts already printed (metrics_from_equity() output,
+    each with a full 'equity_curve' np.array that main() otherwise discards) -- reused
+    as-is, not recomputed, so the JSON can never disagree with the console table."""
+    timestamps = world[COINS[0]]["timestamp"]
+    return {
+        "window": {
+            "start": timestamps.iloc[0].isoformat(),
+            "end": timestamps.iloc[-1].isoformat(),
+            "n_hours": len(timestamps),
+        },
+        "verdict": verdict,
+        "rows": [
+            {
+                "label": r["label"],
+                "total_return": r["total_return"],
+                "sortino": r["sortino"],
+                "max_drawdown": r["max_drawdown"],
+                "n_trades": r["n_trades"],
+                "final_value": r["final_value"],
+                "equity_curve": np.asarray(r["equity_curve"]).tolist(),
+                "is_champion": r["label"] == "CHAMPION",
+            }
+            for r in rows
+        ],
+    }
+
+
 def main():
-    if len(sys.argv) != 2:
-        print("Usage: python3 evaluate_champion.py <run_id | checkpoint.json path | genome.json path>")
-        sys.exit(1)
-    source = sys.argv[1]
+    args = parse_args()
+    source = args.source
 
     print("=" * 90)
     print("CHAMPION EVALUATION ON LOCKED HELD-OUT REAL DATA -- MEASUREMENT ONLY, NEVER TUNING")
@@ -257,6 +298,21 @@ def main():
     print("that defeats the entire point of holding it out. Iterate using generated-world")
     print("performance; come back here only for a fresh check on a genuinely NEW champion.")
     print("=" * 90)
+
+    if args.dump_json:
+        verdict = {
+            # bool(...): the comparisons above are numpy scalar comparisons -> np.bool_,
+            # which (unlike numpy float64) is NOT a json-serializable subclass of the
+            # builtin type -- cast explicitly rather than silently fail mid-dump.
+            "beats_basket_sortino": bool(beats_basket_sortino),
+            "beats_best_single_return": bool(beats_best_single_coin_return),
+            "beats_random_median": bool(beats_random_median),
+            "profitable_absolute": bool(profitable),
+        }
+        dump = build_json_dump(world, rows, verdict)
+        with open(args.dump_json, "w") as f:
+            json.dump(dump, f)
+        print(f"\nWrote full results (verdict + every row's equity_curve) to {args.dump_json!r}")
 
 
 if __name__ == "__main__":
