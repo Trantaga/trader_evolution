@@ -19,7 +19,7 @@ def main():
     p.add_argument("--pop", type=int, default=8)
     p.add_argument("--gens", type=int, default=4)
     p.add_argument("--worlds", type=int, default=2)
-    p.add_argument("--hours", type=int, default=500)
+    p.add_argument("--hours", type=int, default=1000)
     args = p.parse_args()
 
     result = run_evolution(pop_size=args.pop, n_generations=args.gens, n_worlds=args.worlds,

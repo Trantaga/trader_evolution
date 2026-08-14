@@ -56,7 +56,7 @@ DEFAULT_JOB_BUDGET_SECONDS = 5.5 * 3600
 
 # Plateau early-stop (run() only -- see run()'s docstring). Whichever of this or the
 # n_generations hard cap triggers first ends the run (DONE, no re-dispatch).
-PLATEAU_PATIENCE = 40           # generations without a "significant" improvement before stopping
+PLATEAU_PATIENCE = 60           # generations without a "significant" improvement before stopping
 PLATEAU_MIN_IMPROVEMENT = 0.01  # >=1% relative improvement in best_fitness counts as progress
 PLATEAU_EPS = 1e-9              # floors the relative-improvement denominator (see
                                   # _is_significant_improvement) so a near-zero baseline doesn't

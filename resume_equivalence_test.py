@@ -45,7 +45,9 @@ def report(name, passed, detail=""):
 G = 8            # target total generations
 K = 4            # checkpoint-after generation for the resume tests
 SEED = 4242
-CONFIG = dict(pop_size=10, n_worlds=2, world_length_hours=500, n_genes_init=15,
+# world_length_hours must exceed sensors.FIRST_DECIDABLE_T (721 as of real-02's 720h
+# mom_long sensor) or simulate()/evaluate_population_fast() reject the world as too short.
+CONFIG = dict(pop_size=10, n_worlds=2, world_length_hours=1000, n_genes_init=15,
               elite_n=1, master_seed=SEED, engine="fast")
 
 

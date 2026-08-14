@@ -85,15 +85,18 @@ the allocated cash); can't sell unheld (masked by qty>0); mark-to-market at clos
 import numpy as np
 
 from brain import N_INTERNAL, N_COINS
-from sensors import COINS, N_SENSORS, FIRST_DECIDABLE_T, UNREALIZED_PL_NORM, precompute_price_sensors
+from sensors import (
+    COINS, N_SENSORS, FIRST_DECIDABLE_T, UNREALIZED_PL_NORM, GLOBAL_KEY,
+    PRICE_SENSOR_NAMES, precompute_price_sensors,
+)
 from simulator import Trade, DEFAULT_PARAMS, _extract_aligned_arrays
 from genetics import connection_id, connection_sort_key
 from fitness import max_drawdown
 
 N_COINS_LOCAL = len(COINS)
-_PRICE_SENSOR_NAMES = ["ret_1h", "ret_6h", "ret_24h", "ret_168h", "price_vs_sma168", "vol_24h"]
-_N_PRICE_PER_COIN = len(_PRICE_SENSOR_NAMES)  # 6
-_N_PER_COIN = _N_PRICE_PER_COIN + 2  # + holding_frac, unrealized_pl = 8, matches sensors.SENSOR_NAMES layout
+_PRICE_SENSOR_NAMES = PRICE_SENSOR_NAMES  # reused from sensors.py, not re-transcribed
+_N_PRICE_PER_COIN = len(_PRICE_SENSOR_NAMES)  # 9 (real-02: +rel_strength_short/medium, +mom_long)
+_N_PER_COIN = _N_PRICE_PER_COIN + 2  # + holding_frac, unrealized_pl = 11, matches sensors.SENSOR_NAMES layout
 
 
 def _canonicalize(genome):
@@ -182,8 +185,9 @@ def _batched_forward(S, si, sa, ia):
 
 def _assemble_sensor_matrix(S, price_block, t, closes_mat, qty, avg_entry, cash):
     """Fill S (P, N_SENSORS), in place, for decision hour t -- shared price-derived block
-    (broadcast to every genome) + per-genome portfolio state marked using close[t-1] only
-    (look-ahead safe, matches sensors.compute_sensor_vector() exactly). Factored out of
+    (broadcast to every genome, now including the GLOBAL breadth sensor as its trailing
+    column) + per-genome portfolio state marked using close[t-1] only (look-ahead safe,
+    matches sensors.compute_sensor_vector() exactly). Factored out of
     evaluate_population_fast() so equivalence_test.py's granular decision-by-decision
     check can call this SAME code instead of a separately hand-copied reimplementation
     (which is exactly how the duplicate-connection and prior discrepancies in this file
@@ -205,7 +209,7 @@ def _assemble_sensor_matrix(S, price_block, t, closes_mat, qty, avg_entry, cash)
 
     cash_frac = np.where(equity_positive, cash / safe_equity, 0.0)
 
-    price_row = price_block[t]  # (N_COINS*6,)
+    price_row = price_block[t]  # (N_COINS*_N_PRICE_PER_COIN + 1,) -- trailing entry is breadth
     for ci in range(N_COINS_LOCAL):
         S[:, ci * _N_PER_COIN: ci * _N_PER_COIN + _N_PRICE_PER_COIN] = \
             price_row[ci * _N_PRICE_PER_COIN: ci * _N_PRICE_PER_COIN + _N_PRICE_PER_COIN][None, :]
@@ -213,17 +217,20 @@ def _assemble_sensor_matrix(S, price_block, t, closes_mat, qty, avg_entry, cash)
         S[:, ci * _N_PER_COIN + _N_PRICE_PER_COIN + 1] = unrealized_pl[:, ci]
     global_base = N_COINS_LOCAL * _N_PER_COIN
     S[:, global_base] = cash_frac
-    S[:, global_base + 1] = 1.0  # bias
-    assert global_base + 2 == N_SENSORS
+    S[:, global_base + 1] = price_row[N_COINS_LOCAL * _N_PRICE_PER_COIN]  # breadth (shared, broadcasts)
+    S[:, global_base + 2] = 1.0  # bias
+    assert global_base + 3 == N_SENSORS
 
 
 def build_price_block(price_sensors, T):
-    """(T, N_COINS*6) shared price-sensor block in the layout _assemble_sensor_matrix
-    expects -- factored out for the same reuse-not-reimplement reason as above."""
-    price_block = np.empty((T, N_COINS_LOCAL * _N_PRICE_PER_COIN))
+    """(T, N_COINS*_N_PRICE_PER_COIN + 1) shared price-sensor block in the layout
+    _assemble_sensor_matrix expects -- per-coin columns followed by ONE trailing global
+    breadth column -- factored out for the same reuse-not-reimplement reason as above."""
+    price_block = np.empty((T, N_COINS_LOCAL * _N_PRICE_PER_COIN + 1))
     for ci, coin in enumerate(COINS):
         for ni, name in enumerate(_PRICE_SENSOR_NAMES):
             price_block[:, ci * _N_PRICE_PER_COIN + ni] = price_sensors[coin][name]
+    price_block[:, N_COINS_LOCAL * _N_PRICE_PER_COIN] = price_sensors[GLOBAL_KEY]["breadth"]
     return price_block
 
 
@@ -256,8 +263,9 @@ def evaluate_population_fast(genomes, world_ohlcv, params=None):
     closes_mat = np.stack([closes[c] for c in COINS], axis=1)  # (T, N_COINS)
 
     # Precompute the shared (same for every genome) price-sensor block once, as a
-    # (T, N_COINS * 6) array in the coin order needed below, to avoid re-indexing dicts
-    # every hour of the main loop.
+    # (T, N_COINS * _N_PRICE_PER_COIN + 1) array (per-coin columns + trailing global
+    # breadth column) in the coin order needed below, to avoid re-indexing dicts every
+    # hour of the main loop.
     price_block = build_price_block(price_sensors, T)
 
     cash = np.full(P, starting_capital, dtype=float)

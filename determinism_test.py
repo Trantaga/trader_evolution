@@ -30,8 +30,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MARKER = "###COMPACT_JSON###"
 
 # Small/fast config -- this test only needs to exercise crossover/mutation a few times,
-# not produce a meaningful trajectory.
-CONFIG = dict(pop_size=8, n_generations=4, n_worlds=2, world_length_hours=500)
+# not produce a meaningful trajectory. world_length_hours must exceed
+# sensors.FIRST_DECIDABLE_T (721 as of real-02's 720h mom_long sensor) or simulate()/
+# evaluate_population_fast() reject the world as too short.
+CONFIG = dict(pop_size=8, n_generations=4, n_worlds=2, world_length_hours=1000)
 
 
 def report(name, passed, detail=""):
