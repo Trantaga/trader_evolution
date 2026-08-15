@@ -62,11 +62,18 @@ def write_full_log(run_id, gen, population, fitnesses, eval_results, best_genome
 
 
 def compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, world_regimes,
-                    generations_since_improvement=None, best_fitness_so_far=None, stop_reason=None):
-    """generations_since_improvement/best_fitness_so_far/stop_reason are the plateau
+                    generations_since_improvement=None, best_fitness_so_far=None, stop_reason=None,
+                    smoothed_median_fitness=None, generations_since_median_improvement=None):
+    """generations_since_improvement/best_fitness_so_far/stop_reason and
+    smoothed_median_fitness/generations_since_median_improvement are the plateau
     early-stop criterion's state (see evolution.py's PLATEAU_PATIENCE/
-    PLATEAU_MIN_IMPROVEMENT) -- optional/None for callers that don't track it (e.g.
-    run_evolution()'s legacy no-checkpoint path), so this stays backward compatible.
+    PLATEAU_MIN_IMPROVEMENT/SMOOTHED_MEDIAN_WINDOW) -- optional/None for callers that
+    don't track it (e.g. run_evolution()'s legacy no-checkpoint path), so this stays
+    backward compatible. smoothed_median_fitness/generations_since_median_improvement are
+    the schema-v3 fields that actually decide the stop (Fix 2); generations_since_
+    improvement/best_fitness_so_far are the OLDER generation-best-based fields, kept for
+    reference/telemetry only (see evolution.py's module docstring for why they no longer
+    decide anything).
     """
     fitnesses = np.asarray(fitnesses, dtype=float)
     n_trades = np.array([r["mean_n_trades"] for r in eval_results])
@@ -91,6 +98,8 @@ def compact_record(gen, fitnesses, eval_results, best_genome, world_seeds, world
         "generations_since_improvement": generations_since_improvement,
         "best_fitness_so_far": best_fitness_so_far,
         "stop_reason": stop_reason,
+        "smoothed_median_fitness": smoothed_median_fitness,
+        "generations_since_median_improvement": generations_since_median_improvement,
     }
 
 
@@ -104,7 +113,12 @@ def append_compact(run_id, record):
 
 def print_console_line(gen, record):
     plateau_str = ""
-    if record.get("generations_since_improvement") is not None:
+    if record.get("generations_since_median_improvement") is not None:
+        plateau_str = (f"  smoothed_median={record['smoothed_median_fitness']:+7.4f}"
+                        f"  since_median_improvement={record['generations_since_median_improvement']:3d}")
+    elif record.get("generations_since_improvement") is not None:
+        # older (pre-Fix-2) records: fall back to the generation-best-based counter so
+        # this still prints something sensible for historical compact.jsonl files.
         plateau_str = f"  since_improvement={record['generations_since_improvement']:3d}"
     print(f"gen={gen:3d}  best={record['best_fitness']:+8.4f}  median={record['median_fitness']:+8.4f}  "
           f"worst={record['worst_fitness']:+8.4f}  "

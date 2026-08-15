@@ -29,14 +29,26 @@ CHECKPOINT SCHEMA (JSON, one file per run_id):
   best_genome / best_fitness / best_gen: the best genome seen across ALL completed
     generations (not just the current one), canonical-order gene list + its fitness +
     which generation it was found in. Updates on ANY strict improvement, unlike
-    plateau_best_fitness below.
-  plateau_best_fitness / generations_since_improvement: state for the plateau early-stop
-    criterion (see evolution.py's PLATEAU_PATIENCE/PLATEAU_MIN_IMPROVEMENT). Distinct from
-    best_fitness above: plateau_best_fitness only advances on a >= PLATEAU_MIN_IMPROVEMENT
-    RELATIVE jump (not any improvement), and generations_since_improvement counts
-    consecutive generations without such a jump. *** MUST be restored on resume -- if
-    reset to 0 every job, the patience counter never reaches PLATEAU_PATIENCE across a
-    multi-job chained run and the criterion silently never fires. ***
+    plateau_best_fitness below. *** NOT trusted for champion selection (see
+    champion_selection.py) -- a single generation-best draw is vulnerable to exactly the
+    kind of single-world Sortino outlier that produced real-02's gen-170 "8300" artifact
+    (see fitness.py's DD_FLOOR/SORTINO_CAP fix); kept here purely for reference/telemetry. ***
+  plateau_best_fitness / generations_since_improvement: OLD generation-best-based plateau
+    state (see evolution.py's PLATEAU_PATIENCE/PLATEAU_MIN_IMPROVEMENT). *** NO LONGER
+    DECIDES THE STOP (schema v3+) -- kept only for reference/telemetry; see
+    smoothed_median_best_so_far/generations_since_median_improvement below, which is what
+    actually drives the plateau criterion now. *** Still MUST be restored on resume so
+    telemetry stays continuous across a multi-job chained run, same reasoning as before.
+  smoothed_median_best_so_far / generations_since_median_improvement: schema v3+. THE
+    state that actually decides the plateau stop (see evolution.py's
+    _smoothed_median_fitness/SMOOTHED_MEDIAN_WINDOW). smoothed_median_best_so_far only
+    advances on a >= PLATEAU_MIN_IMPROVEMENT RELATIVE jump in the trailing
+    SMOOTHED_MEDIAN_WINDOW-generation mean of median_fitness (a population-wide,
+    noise-damped signal -- not a single noisy generation-best draw), and
+    generations_since_median_improvement counts consecutive generations without such a
+    jump. *** MUST be restored on resume -- if reset to 0 every job, the patience counter
+    never reaches PLATEAU_PATIENCE across a multi-job chained run and the criterion
+    silently never fires. ***
 
 Why checkpoint only after a FULLY completed generation, never mid-generation: this is
 what makes the "kill mid-generation" resume case correct for free. If the process dies
@@ -54,7 +66,10 @@ import tempfile
 import numpy as np
 
 CHECKPOINT_DIR = "checkpoints"
-SCHEMA_VERSION = 2  # v2 adds plateau_best_fitness/generations_since_improvement
+# v2 adds plateau_best_fitness/generations_since_improvement.
+# v3 adds smoothed_median_best_so_far/generations_since_median_improvement (see
+# evolution.py's Fix 2 docstring) -- the v2 fields are kept (reference/telemetry only).
+SCHEMA_VERSION = 3
 
 
 def checkpoint_path(run_id):
@@ -90,7 +105,8 @@ def _genome_from_json(rows):
 
 def save_checkpoint(run_id, config, last_completed_gen, done, master_rng, population,
                      compact_records, best_genome, best_fitness, best_gen,
-                     plateau_best_fitness, generations_since_improvement):
+                     plateau_best_fitness, generations_since_improvement,
+                     smoothed_median_best_so_far, generations_since_median_improvement):
     """Atomically write the checkpoint AND (re)write the standalone compact JSONL file
     from the SAME compact_records list, atomically. Both writes use the identical data
     source, so a resume can never duplicate, skip, or desync a generation's record
@@ -110,6 +126,8 @@ def save_checkpoint(run_id, config, last_completed_gen, done, master_rng, popula
         "best_gen": best_gen,
         "plateau_best_fitness": plateau_best_fitness,
         "generations_since_improvement": generations_since_improvement,
+        "smoothed_median_best_so_far": smoothed_median_best_so_far,
+        "generations_since_median_improvement": generations_since_median_improvement,
     }
     _atomic_write(checkpoint_path(run_id), lambda f: json.dump(state, f))
 

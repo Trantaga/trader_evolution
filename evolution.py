@@ -56,8 +56,24 @@ DEFAULT_JOB_BUDGET_SECONDS = 5.5 * 3600
 
 # Plateau early-stop (run() only -- see run()'s docstring). Whichever of this or the
 # n_generations hard cap triggers first ends the run (DONE, no re-dispatch).
-PLATEAU_PATIENCE = 60           # generations without a "significant" improvement before stopping
-PLATEAU_MIN_IMPROVEMENT = 0.01  # >=1% relative improvement in best_fitness counts as progress
+#
+# real-02 BUG FIX: the plateau criterion used to track generation-BEST fitness
+# (gen_best_fitness), which is a single-genome, single-world-set draw -- extremely
+# noisy, and specifically vulnerable to a Sortino outlier on one lucky world dominating
+# the mean-aggregated fitness (see fitness.py's DD_FLOOR/SORTINO_CAP fix for the root
+# cause). real-02 hit exactly this: a gen-170 genome with a near-zero-downside world
+# scored ~8300, best_fitness_so_far got stuck there, and the run false-plateaued at gen
+# 249 while the population MEDIAN was still improving normally. The progress signal
+# below is now the trailing mean of median_fitness over the last SMOOTHED_MEDIAN_WINDOW
+# generations -- the population median is a population-wide, not single-genome, signal,
+# and smoothing it over a window further damps single-generation noise. See run()'s loop
+# for smoothed_median_best_so_far/generations_since_median_improvement, the NEW state
+# that actually drives the stop decision; the OLD gen-best-based plateau_best_fitness/
+# generations_since_improvement fields are still tracked and checkpointed, but ONLY for
+# reference/telemetry now -- they no longer decide anything (per this task's Fix 2).
+SMOOTHED_MEDIAN_WINDOW = 10      # trailing window (generations) the progress signal is averaged over
+PLATEAU_PATIENCE = 100          # generations without a "significant" improvement before stopping
+PLATEAU_MIN_IMPROVEMENT = 0.01  # >=1% relative improvement counts as progress
 PLATEAU_EPS = 1e-9              # floors the relative-improvement denominator (see
                                   # _is_significant_improvement) so a near-zero baseline doesn't
                                   # divide by ~0 -- fitness can be negative or near zero, so
@@ -71,6 +87,16 @@ def _is_significant_improvement(new_value, baseline):
     Sortino-based score and can be either)."""
     denom = max(abs(baseline), PLATEAU_EPS)
     return (new_value - baseline) / denom >= PLATEAU_MIN_IMPROVEMENT
+
+
+def _smoothed_median_fitness(compact_records, gen_median_fitness, window=SMOOTHED_MEDIAN_WINDOW):
+    """Trailing mean of median_fitness over the last `window` generations INCLUDING the
+    generation just computed (gen_median_fitness, not yet appended to compact_records at
+    the point this is called). Degrades gracefully early in a run: uses whatever's
+    available if fewer than `window` generations exist yet, same as any trailing-window
+    statistic."""
+    recent = [r["median_fitness"] for r in compact_records[-(window - 1):]] + [gen_median_fitness]
+    return float(np.mean(recent))
 
 
 # --------------------------------------------------------------------------------------
@@ -248,9 +274,23 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
     every existing caller. Ignored on resume (checkpoint's stored values are authoritative).
 
     Also stops early (DONE) if the PLATEAU criterion fires: PLATEAU_PATIENCE generations
-    pass without a >=PLATEAU_MIN_IMPROVEMENT relative improvement in best_fitness. This
-    plateau state (plateau_best_fitness, generations_since_improvement) is checkpointed
-    and restored on resume, same as everything else -- see checkpoint.py's schema.
+    pass without a >=PLATEAU_MIN_IMPROVEMENT relative improvement in the SMOOTHED-MEDIAN
+    progress signal (trailing SMOOTHED_MEDIAN_WINDOW-generation mean of median_fitness --
+    a population-wide, noise-damped signal, NOT the single noisy generation-best; see
+    _smoothed_median_fitness()/SMOOTHED_MEDIAN_WINDOW above for why). This state
+    (smoothed_median_best_so_far, generations_since_median_improvement) is checkpointed
+    and restored on resume, same as everything else -- see checkpoint.py's schema. The
+    OLD generation-best-based plateau_best_fitness/generations_since_improvement fields
+    are still tracked and checkpointed too, but purely for reference/telemetry -- they no
+    longer decide the stop (see module docstring's real-02 bug-fix note).
+
+    Once done becomes True (either the n_generations cap or the plateau), the generation
+    loop below BREAKS IMMEDIATELY -- it does not keep evaluating further generations
+    within the same job after done is decided (this was a real bug: done/stop_reason used
+    to be computed and checkpointed correctly, but nothing stopped the loop itself, so a
+    job could silently keep re-evaluating the frozen final population against fresh
+    worlds for up to job_budget_hours/max_generations_this_job past the actual stop
+    point, further muddying the very telemetry meant to explain why it stopped).
 
     Returns {"done": bool, "last_completed_gen": int, "best_fitness": float,
              "best_genome": genome, "compact_records": [...], "checkpoint_path": str}.
@@ -282,14 +322,16 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         best_genome = checkpoint.restore_best_genome(state)
         best_fitness = state["best_fitness"]
         best_gen = state["best_gen"]
-        # .get() with a safe default: tolerates resuming from a schema-v1 checkpoint
-        # (written before the plateau criterion existed) without crashing -- it just
-        # restarts the plateau counter from this point rather than losing the whole run.
+        # .get() with a safe default: tolerates resuming from an older-schema checkpoint
+        # (written before a given plateau field existed) without crashing -- it just
+        # restarts that counter from this point rather than losing the whole run.
         plateau_best_fitness = state.get("plateau_best_fitness")
         generations_since_improvement = state.get("generations_since_improvement", 0)
+        smoothed_median_best_so_far = state.get("smoothed_median_best_so_far")
+        generations_since_median_improvement = state.get("generations_since_median_improvement", 0)
         print(f"Resuming run_id={run_id} from checkpoint: last_completed_gen={last_completed_gen}, "
               f"{len(compact_records)} compact records loaded, "
-              f"generations_since_improvement={generations_since_improvement}.")
+              f"generations_since_median_improvement={generations_since_median_improvement}.")
         if state["done"]:
             print("Checkpoint already marks this run DONE -- nothing to do.")
             print("RUN_STATUS: DONE")
@@ -313,6 +355,7 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         last_completed_gen = -1
         best_genome, best_fitness, best_gen = None, float("-inf"), -1
         plateau_best_fitness, generations_since_improvement = None, 0
+        smoothed_median_best_so_far, generations_since_median_improvement = None, 0
         print(f"Starting fresh run_id={run_id}: pop={pop_size} n_generations={n_generations} "
               f"n_worlds={n_worlds} engine={engine}")
 
@@ -350,11 +393,9 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         if gen_best_fitness > best_fitness:
             best_genome, best_fitness, best_gen = gen_best_genome, gen_best_fitness, gen
 
-        # -- plateau tracking (see PLATEAU_PATIENCE/PLATEAU_MIN_IMPROVEMENT above) --
+        # -- OLD gen-best-based plateau tracking: kept for reference/telemetry ONLY, no
+        # longer decides the stop (see module docstring's real-02 bug-fix note). --
         if plateau_best_fitness is None:
-            # first generation this run has ever seen (fresh start, or resuming a
-            # schema-v1 checkpoint with no prior plateau state): establishes the
-            # baseline: nothing to compare against yet, so it's not "no improvement".
             plateau_best_fitness = gen_best_fitness
             generations_since_improvement = 0
         elif _is_significant_improvement(gen_best_fitness, plateau_best_fitness):
@@ -362,7 +403,23 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
             generations_since_improvement = 0
         else:
             generations_since_improvement += 1
-        plateaued = generations_since_improvement >= PLATEAU_PATIENCE
+
+        # -- NEW smoothed-median plateau tracking: THIS decides the stop (Fix 2). See
+        # SMOOTHED_MEDIAN_WINDOW/_smoothed_median_fitness()/PLATEAU_PATIENCE above. --
+        gen_median_fitness = float(np.median(fitnesses))
+        smoothed_median_fitness = _smoothed_median_fitness(compact_records, gen_median_fitness)
+        if smoothed_median_best_so_far is None:
+            # first generation this run has ever seen (fresh start, or resuming a
+            # checkpoint with no prior smoothed-median plateau state): establishes the
+            # baseline -- nothing to compare against yet, so it's not "no improvement".
+            smoothed_median_best_so_far = smoothed_median_fitness
+            generations_since_median_improvement = 0
+        elif _is_significant_improvement(smoothed_median_fitness, smoothed_median_best_so_far):
+            smoothed_median_best_so_far = smoothed_median_fitness
+            generations_since_median_improvement = 0
+        else:
+            generations_since_median_improvement += 1
+        plateaued = generations_since_median_improvement >= PLATEAU_PATIENCE
 
         hit_cap = gen == n_generations - 1
         done = hit_cap or plateaued
@@ -371,13 +428,16 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         record = telemetry.compact_record(
             gen, fitnesses, eval_results, gen_best_genome, world_seeds, composition,
             generations_since_improvement=generations_since_improvement,
-            best_fitness_so_far=plateau_best_fitness, stop_reason=stop_reason)
+            best_fitness_so_far=plateau_best_fitness, stop_reason=stop_reason,
+            smoothed_median_fitness=smoothed_median_fitness,
+            generations_since_median_improvement=generations_since_median_improvement)
         telemetry.print_console_line(gen, record)
         compact_records.append(record)
 
         if plateaued and not hit_cap:
             print(f"Plateau reached: no >={PLATEAU_MIN_IMPROVEMENT:.0%} relative improvement in "
-                  f"best_fitness for {generations_since_improvement} generations "
+                  f"smoothed_median_fitness (trailing {SMOOTHED_MEDIAN_WINDOW}-gen mean of "
+                  f"median_fitness) for {generations_since_median_improvement} generations "
                   f"(patience={PLATEAU_PATIENCE}) -- stopping early.")
 
         if not done:
@@ -386,9 +446,20 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         # Checkpoint AFTER the generation (and, if not done, the next population) is
         # fully built -- see checkpoint.py's docstring for why this specific point
         # guarantees correct mid-generation-kill resume.
-        ckpt_path = checkpoint.save_checkpoint(run_id, config, last_completed_gen, done, master_rng,
-                                                population, compact_records, best_genome, best_fitness, best_gen,
-                                                plateau_best_fitness, generations_since_improvement)
+        ckpt_path = checkpoint.save_checkpoint(
+            run_id, config, last_completed_gen, done, master_rng, population, compact_records,
+            best_genome, best_fitness, best_gen, plateau_best_fitness, generations_since_improvement,
+            smoothed_median_best_so_far, generations_since_median_improvement)
+
+        # CLEAN hard stop (Fix 2): once done is decided, stop the loop immediately in
+        # THIS job -- do not keep evaluating the (frozen, since not rebuilt above)
+        # population against further fresh worlds. Multi-job re-dispatch is separately
+        # guarded by evolve.yml only re-dispatching when checkpoint.json's done is False;
+        # this break is what makes a single job stop cleanly the moment done flips True,
+        # rather than continuing until max_generations_this_job/job_budget_hours (the
+        # real-02 bug -- see module docstring).
+        if done:
+            break
 
     status = "DONE" if done else "NOT_DONE"
     print(f"\nrun_id={run_id}: completed generation {last_completed_gen}/{n_generations - 1} "
