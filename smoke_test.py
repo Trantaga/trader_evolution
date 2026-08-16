@@ -9,9 +9,10 @@ breeds good traders. Eight checks, each PASS/FAIL:
   4. Elites are re-evaluated on fresh worlds: a genome that persists across generations
      shows a fitness CHANGE (proves worlds regenerate; elites aren't cached).
   5. Degeneracy guard: a forced never-trade genome gets fitness ~0, not a large number.
-  6. Drawdown cap: a world whose equity curve breaches DD_CAP is scored via the penalty
-     path, not Sortino -- checked directly (deterministic) and illustrated end-to-end
-     with an always-all-in genome on a real pure-bear world.
+  6. Graduated drawdown penalty: a world whose equity curve breaches DD_SOFT gets a
+     penalty SUBTRACTED from its Sortino score (not replaced by a flat value) -- checked
+     directly (deterministic) and illustrated end-to-end with an always-all-in genome on
+     a real pure-bear world.
   7. Compact JSONL is written and parseable; its size is reported (should be tiny).
   8. Learning-signal sanity: report the best/median trajectory over the run; no forcing.
 
@@ -27,7 +28,8 @@ import genetics
 from brain import Gene, N_INTERNAL, N_COINS
 from sensors import COINS, BIAS_SENSOR_ID
 from fitness import (
-    evaluate_genome, score_world, generate_world, DD_CAP, DD_BREACH_PENALTY,
+    evaluate_genome, score_world, generate_world, DD_CAP, DD_SOFT, PENALTY_SCALE,
+    drawdown_penalty, sortino_ratio,
 )
 from evolution import run_evolution
 import telemetry
@@ -153,23 +155,41 @@ def main():
            f"mean_n_trades={res['mean_n_trades']}")
 
     # ------------------------------------------------------------------------------
-    # 6. Drawdown cap.
+    # 6. Graduated drawdown penalty.
     # ------------------------------------------------------------------------------
-    print("\n-- Check 6: drawdown cap --")
-    # (a) Deterministic unit check of the cap mechanism itself: a synthetic equity curve
-    # with a known >DD_CAP drawdown must be scored via the penalty path, not Sortino.
+    print("\n-- Check 6: graduated drawdown penalty --")
+    # (a) Deterministic unit check: a synthetic equity curve with a known >DD_SOFT
+    # drawdown must have a NONZERO penalty SUBTRACTED from (not replacing) its Sortino
+    # score, and the penalty must exactly match drawdown_penalty(dd) (reproducibility).
     synthetic_equity = np.concatenate([
         np.linspace(1000, 1000, 10),
-        np.linspace(1000, 250, 100),   # -75% drawdown, well past DD_CAP=0.60
+        np.linspace(1000, 250, 100),   # -75% drawdown, well past DD_SOFT=0.40
         np.linspace(250, 400, 50),     # partial recovery -- must NOT rescue the score
     ])
     fake_sim_result = {"equity_curve": synthetic_equity, "trades": [], "n_trades": 0,
                         "final_value": float(synthetic_equity[-1])}
     scored = score_world(fake_sim_result)
-    report("synthetic >DD_CAP drawdown is flagged as breached", scored["dd_breached"],
+    report("synthetic >DD_CAP drawdown is flagged as breached (informational only now)", scored["dd_breached"],
            f"max_drawdown={scored['max_drawdown']:.2%} (cap={DD_CAP:.0%})")
-    report("breached-cap score equals the fixed penalty, not a Sortino value", scored["score"] == -DD_BREACH_PENALTY,
-           f"score={scored['score']}")
+    expected_penalty = drawdown_penalty(scored["max_drawdown"])
+    report("drawdown_penalty matches the deterministic formula", scored["drawdown_penalty"] == expected_penalty,
+           f"drawdown_penalty={scored['drawdown_penalty']:.4f} expected={expected_penalty:.4f}")
+    expected_score = sortino_ratio(synthetic_equity) - expected_penalty
+    report("score == Sortino MINUS the penalty (not a flat replacement value)",
+           scored["score"] == expected_score,
+           f"score={scored['score']:.4f} sortino={sortino_ratio(synthetic_equity):.4f} "
+           f"penalty={expected_penalty:.4f}")
+    report("penalty is meaningfully nonzero for a deep breach", expected_penalty > 1.0,
+           f"drawdown_penalty={expected_penalty:.4f} (DD_SOFT={DD_SOFT:.0%}, PENALTY_SCALE={PENALTY_SCALE})")
+
+    # (b) Below DD_SOFT: penalty must be EXACTLY zero (gradient preserved, no penalty at
+    # all) -- a shallow, mild drawdown well under the soft threshold.
+    mild_equity = np.concatenate([np.linspace(1000, 1000, 10), np.linspace(1000, 900, 20),
+                                   np.linspace(900, 1000, 20)])  # -10% drawdown, well under DD_SOFT
+    mild_scored = score_world({"equity_curve": mild_equity, "trades": [], "n_trades": 0,
+                                "final_value": float(mild_equity[-1])})
+    report("drawdown well under DD_SOFT gets exactly zero penalty", mild_scored["drawdown_penalty"] == 0.0,
+           f"max_drawdown={mild_scored['max_drawdown']:.2%} penalty={mild_scored['drawdown_penalty']}")
 
     # (b) Illustrative end-to-end check: an always-all-in-everything genome on a real
     # pure-bear world. Reported, not required to pass for the smoke test's PASS/FAIL

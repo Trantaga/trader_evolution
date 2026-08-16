@@ -1,7 +1,8 @@
 """
-fitness.py — per-genome fitness: Sortino ratio per world (annualized), a hard drawdown
-cap that overrides the score if breached, mean-aggregation across a genome's N_WORLDS.
-Degeneracy is explicitly guarded: doing nothing must score 0, not a large/undefined number.
+fitness.py — per-genome fitness: Sortino ratio per world (annualized) with a GRADUATED
+drawdown penalty (subtracted, not a hard cliff -- see DD_SOFT/PENALTY_SCALE), mean-
+aggregation across a genome's N_WORLDS. Degeneracy is explicitly guarded: doing nothing
+must score 0, not a large/undefined number.
 
 real-02 BUG FIX (DD_FLOOR/SORTINO_CAP below): a genome that happens to have ZERO
 losing hours on one evaluation world (downside_deviation_hourly == 0.0, not just small)
@@ -11,6 +12,22 @@ world -- the old DEGENERACY_DOWNSIDE_EPS=1e-8 floor was too small to matter (ann
 dragged best_fitness to 8300.33, poisoning best_fitness_so_far and causing evolution.py's
 plateau criterion to stop the run on a false signal while the population median was still
 improving normally. DD_FLOOR/SORTINO_CAP close this off structurally; see sortino_detail().
+
+real-03 BUG FIX (DD_SOFT/PENALTY_SCALE below, replacing the old hard DD_CAP cliff): once
+the Sortino fix above was in place, real-03 (otherwise a clean restart of real-02) never
+learned -- median fitness stayed flat ~-3.4 for 121 generations. Root cause: the OLD
+scoring floored ANY world with drawdown > DD_CAP=0.60 to a FLAT score of -DD_BREACH_PENALTY
+(-5.0), discarding all Sortino information for that world. real-03's population started at
+mean_max_drawdown=0.82 (already past the cliff) and never got under it -- meaning most of
+the population scored the SAME flat -5.0 on most worlds most generations, leaving
+selection almost no gradient to climb. (real-02 escaped this only by an accident of the
+OLD, buggy Sortino formula: a lucky near-zero-downside genome got a wildly inflated
+reward, which happened to correlate with low-drawdown/conservative behavior, providing an
+extra-strong -- unintended -- selective push under the cliff. The Sortino fix correctly
+removed that accidental exploit, which exposed this latent cliff problem.) See
+drawdown_penalty()/score_world() for the graduated replacement: a smooth, differentiable
+penalty that still punishes deep drawdowns hard, but preserves a real ranking gradient
+across the whole 0.40-1.0 drawdown range instead of collapsing it all to one flat value.
 """
 
 import numpy as np
@@ -62,11 +79,34 @@ DD_FLOOR = DD_FLOOR_FRACTION * TYPICAL_HOURLY_VOL
 # on ordinary genomes.
 SORTINO_CAP = 10.0
 
-# Hard drawdown cap ("catastrophe guard"): if a world's max drawdown exceeds this, that
-# world's score is floored to -DD_BREACH_PENALTY regardless of what Sortino would say --
-# a bot that rode a position down past the cap "failed" that world even if it recovered.
+# Graduated drawdown penalty (replaces the old hard DD_CAP cliff -- see module docstring's
+# real-03 bug-fix note): SUBTRACTED from the Sortino score, not a replacement of it, so a
+# deep-drawdown world still contributes a genuine ranking signal instead of collapsing to
+# one flat value. Below DD_SOFT, no penalty at all (Sortino alone). Above DD_SOFT, the
+# penalty grows as a square of how far past DD_SOFT the drawdown is (relative to the
+# remaining 1.0-DD_SOFT headroom), so it starts gently and accelerates toward the worst
+# case (dd -> 1.0, total wipeout) -- e.g. dd=0.60 costs ~0.78, dd=0.70 costs ~1.75,
+# dd=0.85 costs ~3.94, dd=0.90 costs ~4.86 (comparable to the old flat -5.0, by design, at
+# the genuinely catastrophic end) -- see this module's own test-run report for the
+# observed spread across a real population's 0.60-0.85 drawdown band.
+DD_SOFT = 0.40
+PENALTY_SCALE = 7.0
+
+# DD_CAP: no longer used for scoring (see drawdown_penalty() above) -- kept ONLY as the
+# threshold score_world() reports "dd_breached" against, for telemetry/diagnostics (e.g.
+# "what fraction of the population is past the old danger line this generation").
 DD_CAP = 0.60
-DD_BREACH_PENALTY = 5.0
+
+
+def drawdown_penalty(dd, dd_soft=DD_SOFT, penalty_scale=PENALTY_SCALE):
+    """0 at/below dd_soft; grows as penalty_scale * ((dd-dd_soft)/(1-dd_soft))**2 above it.
+    Bounded by construction (max_drawdown() is always < 1.0, since equity can approach but
+    never reach exactly 0), so this saturates near penalty_scale as dd -> 1.0 -- no
+    separate explicit clamp needed."""
+    if dd <= dd_soft:
+        return 0.0
+    x = (dd - dd_soft) / (1.0 - dd_soft)
+    return penalty_scale * x * x
 
 # A genome whose mean trade count across its worlds is below this is counted as
 # "degenerate" (~never-trading) for telemetry purposes only (not for scoring).
@@ -182,25 +222,22 @@ def final_cash(trades, starting_capital=STARTING_CAPITAL):
     return cash
 
 
-def score_world(sim_result, dd_cap=DD_CAP, dd_breach_penalty=DD_BREACH_PENALTY):
-    """floor_fired/clamp_fired: whether sortino_detail's DD_FLOOR/SORTINO_CAP changed
-    this world's score -- False (not just absent) when the drawdown cap was breached,
-    since sortino is never even computed in that case (the -dd_breach_penalty score
-    doesn't go through sortino_detail at all)."""
+def score_world(sim_result, dd_soft=DD_SOFT, penalty_scale=PENALTY_SCALE, dd_cap=DD_CAP):
+    """score = Sortino (via sortino_detail, ALWAYS computed now -- see module docstring's
+    real-03 bug-fix note) MINUS a graduated drawdown_penalty(). dd_breached is now purely
+    informational (dd > dd_cap), no longer changes the score."""
     equity = sim_result["equity_curve"]
     dd = max_drawdown(equity)
-    breached = dd > dd_cap
-    if breached:
-        score, floor_fired, clamp_fired = -dd_breach_penalty, False, False
-    else:
-        detail = sortino_detail(equity)
-        score, floor_fired, clamp_fired = detail["sortino"], detail["floor_fired"], detail["clamp_fired"]
+    detail = sortino_detail(equity)
+    penalty = drawdown_penalty(dd, dd_soft, penalty_scale)
+    score = detail["sortino"] - penalty
     cash = final_cash(sim_result["trades"])
     cash_frac = cash / sim_result["final_value"] if sim_result["final_value"] > 0 else 1.0
     return {
-        "score": score, "max_drawdown": dd, "dd_breached": breached,
+        "score": score, "max_drawdown": dd, "dd_breached": dd > dd_cap,
+        "drawdown_penalty": penalty,
         "n_trades": sim_result["n_trades"], "final_value": sim_result["final_value"],
-        "cash_frac": cash_frac, "floor_fired": floor_fired, "clamp_fired": clamp_fired,
+        "cash_frac": cash_frac, "floor_fired": detail["floor_fired"], "clamp_fired": detail["clamp_fired"],
     }
 
 
