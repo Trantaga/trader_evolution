@@ -1,0 +1,51 @@
+CALIBRATION REPORT (4-HOUR bars, TRAIN window -- held-out real data excluded)
+==============================================================================
+TRAIN window: 2020-08-11 04:00:00+00:00 -> 2024-03-09 20:00:00+00:00
+n_periods (4h bars) in window: 7841
+periods_per_year: 2190
+Total returns dropped due to gaps: 0
+Dropped per coin: BTC=0, ETH=0, BNB=0, MATIC=0, SOL=0
+
+PER-COIN STYLIZED FACTS (4h)
+------------------------------------------------------------------------------
+coin        mean_4h   ann_vol     kurt   max_dd   t_dof    beta  idio_vol  garch_ok
+BTC        0.000225    64.24%     7.99  -77.04%    7.40    0.30    29.99%      True
+ETH        0.000294    82.00%     5.66  -81.12%    7.60    0.39    31.85%      True
+BNB        0.000394    87.55%    11.97  -72.44%    6.98    0.39    45.69%      True
+MATIC      0.000491   131.87%     8.45  -88.53%    7.19    0.56    74.88%      True
+SOL        0.000497   136.99%     8.71  -96.60%    8.38    0.56    84.05%      True
+
+GARCH(1,1) PARAMETERS (4h)
+------------------------------------------------------------------------------
+BTC     omega=1.267e-06  alpha=0.0516  beta=0.9442
+ETH     omega=1.533e-06  alpha=0.0576  beta=0.9399
+BNB     omega=3.356e-06  alpha=0.0907  beta=0.9029
+MATIC   omega=4.551e-06  alpha=0.0818  beta=0.9162
+SOL     omega=8.864e-06  alpha=0.0930  beta=0.9013
+
+CORRELATION MATRIX (4h log returns)
+------------------------------------------------------------------------------
+            BTC     ETH     BNB   MATIC     SOL
+BTC       1.000   0.838   0.697   0.626   0.596
+ETH       0.838   1.000   0.731   0.690   0.656
+BNB       0.697   0.731   1.000   0.635   0.577
+MATIC     0.626   0.690   0.635   1.000   0.580
+SOL       0.596   0.656   0.577   0.580   1.000
+
+REGIMES (trailing_window=168h, bull_thresh=+10%, bear_thresh=-10%)
+------------------------------------------------------------------------------
+regime        share     mean_4h   ann_vol  mean_dur_4hbars
+bull         32.60%    0.006680   183.65%             11.5
+bear         31.19%   -0.007257   232.84%              9.7
+sideways     36.21%    0.000258   152.56%              6.0
+
+IDIO-RESIDUAL GARCH (4h)
+------------------------------------------------------------------------------
+coin    resid_ann_vol  idio_vol  vol_match  resid_kurt  resid_acf
+BTC            29.99%    29.99%       True       15.96     0.2638
+ETH            31.85%    31.85%       True       11.64     0.2825
+BNB            45.69%    45.69%       True       30.76     0.3039
+MATIC          74.88%    74.88%       True       17.65     0.3702
+SOL            84.05%    84.05%       True       14.70     0.3043
+
+==============================================================================
