@@ -1,8 +1,11 @@
 """
 evaluate_champion.py — ONE-SHOT evaluation of a finished evolution run's best genome
-against the LOCKED held-out real market data (data/heldout/), via the TRUSTED SLOW
-ORACLE (simulator.simulate -- zero ambiguity; speed is irrelevant for a single run), with
-the SAME trading mechanics/fees/slippage/starting-capital used during training.
+against the LOCKED held-out real market data (data/heldout_4h/, 4-hour bars -- matches
+the v3-4hbar sensor layout and generator_4h.py training worlds used from real-05
+onward; see sensors.SENSOR_LAYOUT_VERSION and fitness.GENERATOR_PERIODS_PER_YEAR), via
+the TRUSTED SLOW ORACLE (simulator.simulate -- zero ambiguity; speed is irrelevant for a
+single run), with the SAME trading mechanics/fees/slippage/starting-capital used during
+training.
 
 *** HELD-OUT DATA IS FOR MEASUREMENT ONLY. NEVER FOR TUNING. ***
 This script exposes NO parameters to change the champion's genome, the market, the fees,
@@ -33,9 +36,9 @@ import sensors
 from brain import Gene, random_genome, N_COINS
 from sensors import COINS, FIRST_DECIDABLE_T
 from simulator import simulate, STARTING_CAPITAL, FEE_RATE, SLIPPAGE
-from fitness import sortino_ratio, max_drawdown
+from fitness import sortino_ratio, max_drawdown, GENERATOR_PERIODS_PER_YEAR
 
-HELD_OUT_DIR = "data/heldout"
+HELD_OUT_DIR = "data/heldout_4h"
 
 # Random-genome baseline (the low bar the champion must clear) -- fixed, not tunable.
 RANDOM_BASELINE_R = 200
@@ -98,35 +101,35 @@ def load_champion_genome(source):
 # Held-out data loading
 # --------------------------------------------------------------------------------------
 def load_held_out_world():
-    """Loads data/heldout/*.csv (persisted by calibrate.py, real recorded rows, gaps
-    preserved as-is -- see data/heldout/README.md) and reindexes to a continuous hourly
-    grid so simulate()/sensors.py's row-position-based rolling windows (which assume
-    consecutive rows are exactly 1h apart, same assumption the generator's gapless output
-    already satisfies) aren't silently corrupted by a missing hour. Gap hours are
-    forward-filled from the last real bar (open/high/low/close) and get volume=0 -- a
-    minimal, standard, clearly-reported "last observed price persists" approximation
-    (exchange downtime), never a fabricated/invented price. The count of filled hours is
-    printed so this is never silent.
+    """Loads data/heldout_4h/*.csv (persisted by calibrate_4h.py, real recorded rows,
+    gaps preserved as-is -- see data/heldout_4h/README.md) and reindexes to a continuous
+    4-hour grid so simulate()/sensors.py's row-position-based rolling windows (which
+    assume consecutive rows are exactly 4h apart under the v3-4hbar sensor layout, same
+    assumption generator_4h.py's gapless output already satisfies) aren't silently
+    corrupted by a missing bar. Gap bars are forward-filled from the last real bar
+    (open/high/low/close) and get volume=0 -- a minimal, standard, clearly-reported "last
+    observed price persists" approximation (exchange downtime), never a fabricated/
+    invented price. The count of filled bars is printed so this is never silent.
     """
     world = {}
     full_index = None
     n_filled_total = 0
     for coin in COINS:
-        df = pd.read_csv(f"{HELD_OUT_DIR}/{coin}USDT_1h_heldout.csv")
+        df = pd.read_csv(f"{HELD_OUT_DIR}/{coin}USDT_4h_heldout.csv")
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
         df = df.set_index("timestamp").sort_index()
         df = df[~df.index.duplicated(keep="first")]
         if full_index is None:
-            full_index = pd.date_range(df.index.min(), df.index.max(), freq="h", tz="UTC")
+            full_index = pd.date_range(df.index.min(), df.index.max(), freq="4h", tz="UTC")
         n_filled_total += len(full_index) - len(df)
         df = df.reindex(full_index)
         df[["open", "high", "low", "close"]] = df[["open", "high", "low", "close"]].ffill()
         df["volume"] = df["volume"].fillna(0.0)
         world[coin] = df.reset_index().rename(columns={"index": "timestamp"})
 
-    print(f"Held-out world: {full_index[0]} -> {full_index[-1]}  ({len(full_index)} hours)")
-    print(f"Gap hours forward-filled from the last real bar (not fabricated): {n_filled_total} "
-          f"coin-hours across all 5 coins.")
+    print(f"Held-out world: {full_index[0]} -> {full_index[-1]}  ({len(full_index)} 4h bars)")
+    print(f"Gap bars forward-filled from the last real bar (not fabricated): {n_filled_total} "
+          f"coin-bars across all 5 coins.")
     return world
 
 
@@ -140,7 +143,10 @@ def metrics_from_equity(equity_curve, n_trades, label):
         "label": label,
         "final_value": final_value,
         "total_return": final_value / STARTING_CAPITAL - 1.0,
-        "sortino": sortino_ratio(equity_curve),
+        # explicit: this path now runs on 4h-bar held-out data (data/heldout_4h/), so the
+        # default HOURS_PER_YEAR=8760 would mis-annualize by ~2x -- see fitness.py's
+        # module docstring on HOURS_PER_YEAR vs GENERATOR_PERIODS_PER_YEAR.
+        "sortino": sortino_ratio(equity_curve, hours_per_year=GENERATOR_PERIODS_PER_YEAR),
         "max_drawdown": max_drawdown(equity_curve),
         "n_trades": n_trades,
         "equity_curve": equity_curve,
@@ -153,8 +159,8 @@ def evaluate_champion(genome, world):
 
 
 def buy_and_hold_single_coin(world, coin):
-    """Buy at the first hour's open, hold to the end, minus entry fee/slippage. No
-    sensors/decisions involved -- a fixed strategy, evaluable from hour 0."""
+    """Buy at the first bar's open, hold to the end, minus entry fee/slippage. No
+    sensors/decisions involved -- a fixed strategy, evaluable from bar 0."""
     opens = world[coin]["open"].to_numpy(dtype=float)
     closes = world[coin]["close"].to_numpy(dtype=float)
     fill_price = opens[0] * (1 + SLIPPAGE)
@@ -165,7 +171,7 @@ def buy_and_hold_single_coin(world, coin):
 
 
 def buy_and_hold_equal_weight_basket(world):
-    """Split starting capital equally across all 5 coins at hour 0, hold to the end."""
+    """Split starting capital equally across all 5 coins at bar 0, hold to the end."""
     n_coins = len(COINS)
     alloc = STARTING_CAPITAL / n_coins
     T = len(world[COINS[0]])
@@ -310,8 +316,8 @@ def main():
     print("=" * 90)
     print(f"  start:  {eq[0]:.2f}")
     print(f"  end:    {eq[-1]:.2f}")
-    print(f"  peak:   {eq.max():.2f}  (at hour {int(eq.argmax())})")
-    print(f"  trough: {eq.min():.2f}  (at hour {int(eq.argmin())})")
+    print(f"  peak:   {eq.max():.2f}  (at bar {int(eq.argmax())})")
+    print(f"  trough: {eq.min():.2f}  (at bar {int(eq.argmin())})")
 
     print("\n" + "=" * 90)
     print("Reminder: this run is a MEASUREMENT. Do not tune the champion, the pipeline, or")
