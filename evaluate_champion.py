@@ -234,11 +234,21 @@ def build_json_dump(world, rows, verdict):
     each with a full 'equity_curve' np.array that main() otherwise discards) -- reused
     as-is, not recomputed, so the JSON can never disagree with the console table."""
     timestamps = world[COINS[0]]["timestamp"]
+    bar_hours = 4  # this path only ever runs on data/heldout_4h/ -- see HELD_OUT_DIR
+    n_bars = len(timestamps)
+    span = timestamps.iloc[-1] - timestamps.iloc[0]
     return {
         "window": {
             "start": timestamps.iloc[0].isoformat(),
             "end": timestamps.iloc[-1].isoformat(),
-            "n_hours": len(timestamps),
+            # explicit, unit-labeled fields -- NOT "n_hours" holding a bar count: that
+            # naming (left over from the hourly-held-out schema, where 1 bar == 1 hour so
+            # the two coincided) silently broke when this path switched to 4h bars --
+            # a consumer reading it as literal hours and dividing by 24 got n_bars/24
+            # (1105/24 ≈ 46d) instead of the true ~184d span. Never reuse that key.
+            "bar_hours": bar_hours,
+            "n_bars": n_bars,
+            "n_days": round(span.total_seconds() / 86400, 1),
         },
         "verdict": verdict,
         "rows": [
