@@ -24,7 +24,7 @@ import numpy as np
 from brain import Gene, random_genome, N_INTERNAL, N_COINS
 from sensors import COINS, FIRST_DECIDABLE_T, BIAS_SENSOR_ID
 from simulator import simulate, FEE_RATE, SLIPPAGE, STARTING_CAPITAL, CASH_EPSILON
-from generator import generate_raw
+from generator_4h import generate_raw  # real-05: 4h-bar generator, matches sensors.py's active layout
 
 RESULTS = []  # (name, passed: bool, detail: str)
 
@@ -37,7 +37,7 @@ def report(name, passed, detail=""):
 
 
 def load_test_world(n_hours=3000, seed=42):
-    dfs, regime_schedule, market_factor = generate_raw(seed=seed, n_hours=n_hours, regime_mode="mix")
+    dfs, regime_schedule, market_factor = generate_raw(seed=seed, n_periods=n_hours, regime_mode="mix")
     return dfs
 
 

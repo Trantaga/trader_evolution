@@ -28,14 +28,28 @@ removed that accidental exploit, which exposed this latent cliff problem.) See
 drawdown_penalty()/score_world() for the graduated replacement: a smooth, differentiable
 penalty that still punishes deep drawdowns hard, but preserves a real ranking gradient
 across the whole 0.40-1.0 drawdown range instead of collapsing it all to one flat value.
+
+real-05 CHANGE (GENERATOR_PERIODS_PER_YEAR below): generated training worlds now come
+from generator_4h.py (4-hour bars), but evaluate_champion.py's held-out CHECK still runs
+against REAL, still-HOURLY recorded data (data/heldout/*.csv) via this SAME module's
+sortino_ratio()/sortino_detail() -- so a single global annualization constant can't
+serve both. HOURS_PER_YEAR (8760) stays the DEFAULT, unchanged, specifically so
+evaluate_champion.py's hourly held-out annualization keeps working correctly without
+any code change there. GENERATOR_PERIODS_PER_YEAR (2190) is a SEPARATE constant, passed
+EXPLICITLY by score_world()/generate_world() (the functions that touch GENERATED, now
+4h-resolution worlds) -- see their call sites. Using the wrong one for either path would
+silently mis-annualize Sortino by a factor of ~2x (mean term 4x, downside term
+sqrt(4)=2x, net ~2x) -- exactly the kind of bug this split is designed to prevent.
 """
 
 import numpy as np
 
 from simulator import simulate, STARTING_CAPITAL
-from generator import generate_raw, load_calibration
+from generator import load_calibration
+from generator_4h import generate_raw as generate_raw_4h, load_calibration as load_calibration_4h
 
-HOURS_PER_YEAR = 8760
+HOURS_PER_YEAR = 8760              # REAL hourly data (evaluate_champion.py's held-out check)
+GENERATOR_PERIODS_PER_YEAR = 2190  # GENERATED 4h-bar worlds (real-05+, generator_4h.py)
 
 # Degeneracy guard: if BOTH downside deviation and mean excess return are ~0 (e.g. a
 # never-trading bot, or any perfectly flat equity curve), fitness contribution is 0, not
@@ -44,19 +58,20 @@ DEGENERACY_RETURN_EPS = 1e-8
 DEGENERACY_DOWNSIDE_EPS = 1e-8
 
 
-def _typical_hourly_vol_from_calibration():
-    """Mean, across all calibrated coins, of ann_vol / sqrt(HOURS_PER_YEAR) -- i.e. each
-    coin's calibrated annualized vol converted back to an hourly scale, then averaged.
-    Computed from config/calibration.json (BTC/ETH/BNB/MATIC/SOL as of this writing) ~=
-    0.011 (1.1% per hour) -- used only to derive DD_FLOOR below, a fixed constant computed
-    once at import time, not re-read per call."""
-    calib = load_calibration()
+def _typical_period_vol_from_calibration():
+    """Mean, across all calibrated coins, of ann_vol / sqrt(GENERATOR_PERIODS_PER_YEAR)
+    -- i.e. each coin's calibrated annualized vol converted back to a PER-4H-BAR scale,
+    then averaged. Computed from config/calibration_4h.json (the ACTIVE generator's own
+    calibration, not the hourly one -- DD_FLOOR must be scaled to whatever resolution
+    score_world() actually evaluates) -- used only to derive DD_FLOOR below, a fixed
+    constant computed once at import time, not re-read per call."""
+    calib = load_calibration_4h()
     ann_vols = [c["ann_vol"] for c in calib["coins"].values()]
-    hourly_vols = [v / np.sqrt(HOURS_PER_YEAR) for v in ann_vols]
-    return float(np.mean(hourly_vols))
+    period_vols = [v / np.sqrt(GENERATOR_PERIODS_PER_YEAR) for v in ann_vols]
+    return float(np.mean(period_vols))
 
 
-TYPICAL_HOURLY_VOL = _typical_hourly_vol_from_calibration()  # ~0.011 as of this calibration
+TYPICAL_HOURLY_VOL = _typical_period_vol_from_calibration()  # ~0.011 as of the 4h calibration (name kept for continuity; now a per-4h-bar value, see docstring above)
 
 # DD_FLOOR: the downside-deviation floor used in the Sortino ratio's denominator, so a
 # genuinely-zero (or near-zero) observed downside on one world can't blow the ratio up
@@ -132,12 +147,23 @@ def build_world_composition(n_worlds):
 
 
 def generate_world(seed, n_hours, regime):
-    """regime in {"bull","bear","sideways","mix"}. Thin wrapper over generator.generate_raw
-    so evolution.py doesn't need to know the pure/mix calling-convention difference."""
+    """regime in {"bull","bear","sideways","mix"}. Thin wrapper over generator_4h.generate_raw
+    so evolution.py doesn't need to know the pure/mix calling-convention difference.
+
+    real-05 CHANGE: now backed by generator_4h.py (4-hour bars), not the original hourly
+    generator.py. The `n_hours` PARAMETER NAME is kept unchanged (evolution.py/
+    checkpoint.py/telemetry.py all call this with `world_length_hours`-style arguments,
+    and this task is scoped to leave those untouched) -- but the VALUE it's called with
+    for real-05 is a 4h-BAR COUNT, not an hour count (e.g. real-04's
+    pure_world_length_hours=2160/mix_world_length_hours=17520 become real-05's
+    pure_world_length_hours=540/mix_world_length_hours=4380 -- same real-world spans,
+    /4 for the new bar resolution). Passed straight through to generator_4h.generate_raw's
+    own `n_periods` parameter, which is genuinely bar-count-native.
+    """
     if regime == "mix":
-        dfs, _, _ = generate_raw(seed=seed, n_hours=n_hours, regime_mode="mix")
+        dfs, _, _ = generate_raw_4h(seed=seed, n_periods=n_hours, regime_mode="mix")
     else:
-        dfs, _, _ = generate_raw(seed=seed, n_hours=n_hours, regime_mode="pure", regime=regime)
+        dfs, _, _ = generate_raw_4h(seed=seed, n_periods=n_hours, regime_mode="pure", regime=regime)
     return dfs
 
 
@@ -222,13 +248,22 @@ def final_cash(trades, starting_capital=STARTING_CAPITAL):
     return cash
 
 
-def score_world(sim_result, dd_soft=DD_SOFT, penalty_scale=PENALTY_SCALE, dd_cap=DD_CAP):
+def score_world(sim_result, dd_soft=DD_SOFT, penalty_scale=PENALTY_SCALE, dd_cap=DD_CAP,
+                 periods_per_year=GENERATOR_PERIODS_PER_YEAR):
     """score = Sortino (via sortino_detail, ALWAYS computed now -- see module docstring's
     real-03 bug-fix note) MINUS a graduated drawdown_penalty(). dd_breached is now purely
-    informational (dd > dd_cap), no longer changes the score."""
+    informational (dd > dd_cap), no longer changes the score.
+
+    real-05: periods_per_year defaults to GENERATOR_PERIODS_PER_YEAR (2190, 4h bars) --
+    this function is ONLY ever called on GENERATED worlds (evolution.py/fast_evaluator.py
+    via evaluate_genome/_evaluate_population), never on real hourly held-out data (that
+    path uses sortino_ratio() directly with ITS OWN default -- see module docstring).
+    Explicit, not relying on sortino_detail's own HOURS_PER_YEAR default, which would
+    silently mis-annualize by ~2x if this world came from generator_4h.py.
+    """
     equity = sim_result["equity_curve"]
     dd = max_drawdown(equity)
-    detail = sortino_detail(equity)
+    detail = sortino_detail(equity, hours_per_year=periods_per_year)
     penalty = drawdown_penalty(dd, dd_soft, penalty_scale)
     score = detail["sortino"] - penalty
     cash = final_cash(sim_result["trades"])

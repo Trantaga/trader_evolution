@@ -174,10 +174,16 @@ def main():
     expected_penalty = drawdown_penalty(scored["max_drawdown"])
     report("drawdown_penalty matches the deterministic formula", scored["drawdown_penalty"] == expected_penalty,
            f"drawdown_penalty={scored['drawdown_penalty']:.4f} expected={expected_penalty:.4f}")
-    expected_score = sortino_ratio(synthetic_equity) - expected_penalty
+    # real-05: score_world() now explicitly annualizes at GENERATOR_PERIODS_PER_YEAR
+    # (4h-bar worlds), not sortino_ratio()'s own HOURS_PER_YEAR default (still 8760, for
+    # evaluate_champion.py's real hourly held-out path) -- match it here explicitly so
+    # this comparison is apples-to-apples, not a stale-default false failure.
+    from fitness import GENERATOR_PERIODS_PER_YEAR
+    expected_sortino = sortino_ratio(synthetic_equity, hours_per_year=GENERATOR_PERIODS_PER_YEAR)
+    expected_score = expected_sortino - expected_penalty
     report("score == Sortino MINUS the penalty (not a flat replacement value)",
            scored["score"] == expected_score,
-           f"score={scored['score']:.4f} sortino={sortino_ratio(synthetic_equity):.4f} "
+           f"score={scored['score']:.4f} sortino={expected_sortino:.4f} "
            f"penalty={expected_penalty:.4f}")
     report("penalty is meaningfully nonzero for a deep breach", expected_penalty > 1.0,
            f"drawdown_penalty={expected_penalty:.4f} (DD_SOFT={DD_SOFT:.0%}, PENALTY_SCALE={PENALTY_SCALE})")

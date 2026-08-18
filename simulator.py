@@ -39,12 +39,27 @@ SLIPPAGE = 0.0005      # 0.05%, modeled as a worse fill price (buys higher, sell
 STARTING_CAPITAL = 1000.0
 CASH_EPSILON = 1e-6    # ignore BUYs when free cash is below this
 
+# real-05 FIX (discovered re-proving equivalence on the 4h generator): `new_qty <= 0`
+# (slow engine) / `new_qty > 0` (fast engine) are logically identical formulas, but after
+# hundreds of sequential state-dependent trades, CASH itself can differ between the two
+# engines by ~1 ULP (ordinary float non-associativity, same root cause as the ~1e-9 Tier-2
+# equity-curve noise fast_evaluator.py's own docstring already documents) -- and on one
+# dense equivalence-test genome, that ULP-level cash difference straddled EXACTLY zero for
+# an already-infinitesimal ~1e-13-unit "dust" buy: one engine saw new_qty as a tiny
+# POSITIVE number (proceeded with a dust trade), the other saw it as <=0 (skipped it) --
+# a genuine Tier-1 discrete-decision mismatch, not previously seen against the hourly
+# generator's numeric ranges. QTY_EPSILON closes this the same way CASH_EPSILON already
+# closes the analogous near-zero-cash case: both engines now agree a quantity this small
+# is economically zero, regardless of which side of true-zero a ULP lands it on.
+QTY_EPSILON = 1e-9      # ignore a BUY's resulting quantity if it's this small or less
+
 Trade = namedtuple("Trade", ["t", "coin", "side", "price", "size", "fee"])
 
 DEFAULT_PARAMS = {
     "buy_thresh": BUY_THRESH, "sell_thresh": SELL_THRESH,
     "fee_rate": FEE_RATE, "slippage": SLIPPAGE,
     "starting_capital": STARTING_CAPITAL, "cash_epsilon": CASH_EPSILON,
+    "qty_epsilon": QTY_EPSILON,
 }
 
 
@@ -121,7 +136,7 @@ def simulate(genome, world_ohlcv, params=None):
                     notional = alloc / (1 + p["fee_rate"])  # notional*(1+fee_rate) == alloc spent
                     fee = alloc - notional
                     new_qty = notional / fill_price
-                    if new_qty <= 0:
+                    if new_qty <= p["qty_epsilon"]:
                         continue
                     old = positions[coin]
                     if old["qty"] > 0:

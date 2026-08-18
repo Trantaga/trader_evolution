@@ -30,6 +30,7 @@ import numpy as np
 
 import checkpoint
 import genetics
+import sensors
 import telemetry
 from brain import random_genome
 from fast_evaluator import evaluate_population_fast
@@ -329,6 +330,20 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         generations_since_improvement = state.get("generations_since_improvement", 0)
         smoothed_median_best_so_far = state.get("smoothed_median_best_so_far")
         generations_since_median_improvement = state.get("generations_since_median_improvement", 0)
+        # .get(): tolerates resuming a pre-real-05 checkpoint (absent -> None -> skip the
+        # check, since there's nothing recorded to compare against). If it IS recorded,
+        # it must match the CURRENTLY-ACTIVE sensors.py exactly -- resuming under a
+        # different sensor layout than the run started with would silently corrupt every
+        # genome's SENSOR-sourced connections (they'd point at different, wrong sensors),
+        # exactly the class of bug SENSOR_LAYOUT_VERSION exists to catch. See sensors.py.
+        recorded_sensor_layout_version = cfg.get("sensor_layout_version")
+        if recorded_sensor_layout_version is not None:
+            assert recorded_sensor_layout_version == sensors.SENSOR_LAYOUT_VERSION, (
+                f"sensor layout mismatch on resume: run_id={run_id!r} was started under "
+                f"sensor layout {recorded_sensor_layout_version!r}, but the currently-active "
+                f"sensors.py is {sensors.SENSOR_LAYOUT_VERSION!r} -- resuming would silently "
+                f"evaluate this run's genomes against the WRONG sensors. Refusing to continue.")
+        sensor_layout_version = recorded_sensor_layout_version or sensors.SENSOR_LAYOUT_VERSION
         print(f"Resuming run_id={run_id} from checkpoint: last_completed_gen={last_completed_gen}, "
               f"{len(compact_records)} compact records loaded, "
               f"generations_since_median_improvement={generations_since_median_improvement}.")
@@ -356,8 +371,9 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         best_genome, best_fitness, best_gen = None, float("-inf"), -1
         plateau_best_fitness, generations_since_improvement = None, 0
         smoothed_median_best_so_far, generations_since_median_improvement = None, 0
+        sensor_layout_version = sensors.SENSOR_LAYOUT_VERSION
         print(f"Starting fresh run_id={run_id}: pop={pop_size} n_generations={n_generations} "
-              f"n_worlds={n_worlds} engine={engine}")
+              f"n_worlds={n_worlds} engine={engine} sensor_layout_version={sensor_layout_version}")
 
     aggregator = AGGREGATOR_FUNCS[aggregator_name]
     config = {
@@ -367,6 +383,13 @@ def run(run_id, pop_size=POP_SIZE, n_generations=N_GENERATIONS, n_worlds=N_WORLD
         "n_genes_init": n_genes_init,
         "elite_n": elite_n, "master_seed": master_seed, "engine": engine,
         "aggregator_name": aggregator_name, "world_regime_composition": composition,
+        # real-05: records which sensor layout this run's genomes were bred against, so a
+        # genome can never be silently evaluated against a DIFFERENT (incompatible) sensor
+        # layout later -- see sensors.py's SENSOR_LAYOUT_VERSION docstring, and the
+        # compatibility check in champion_selection.py / evaluate_champion.py. Resume
+        # carries the ORIGINAL recorded value forward (asserted to match above), never
+        # silently overwritten by whatever sensors.py happens to be active this job.
+        "sensor_layout_version": sensor_layout_version,
     }
 
     gens_run_this_job = 0

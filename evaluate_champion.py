@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 
 import checkpoint as checkpoint_module
+import sensors
 from brain import Gene, random_genome, N_COINS
 from sensors import COINS, FIRST_DECIDABLE_T
 from simulator import simulate, STARTING_CAPITAL, FEE_RATE, SLIPPAGE
@@ -45,6 +46,24 @@ RANDOM_BASELINE_N_GENES = 25  # matches evolution.py's N_GENES_INIT default
 # --------------------------------------------------------------------------------------
 # Champion loading
 # --------------------------------------------------------------------------------------
+def _check_sensor_layout(config):
+    """Sensor-layout compatibility guard (real-05): raises if the checkpoint's recorded
+    sensor_layout_version doesn't match the currently-active sensors.py -- re-evaluating
+    a genome under a DIFFERENT layout would silently score it against the wrong sensors
+    (same connection ids, different meaning). Older (pre-real-05) checkpoints have no
+    recorded version -- nothing to compare, so those pass through unchecked. NOTE: a bare
+    genome JSON file (a plain list, no metadata) can't be checked at all -- this is a
+    known gap, not an oversight; prefer passing a checkpoint (run_id or .json path) when
+    the layout matters."""
+    recorded = (config or {}).get("sensor_layout_version")
+    if recorded is not None and recorded != sensors.SENSOR_LAYOUT_VERSION:
+        raise ValueError(
+            f"sensor layout mismatch: this checkpoint was bred under sensor layout "
+            f"{recorded!r}, but the currently-active sensors.py is "
+            f"{sensors.SENSOR_LAYOUT_VERSION!r}. Evaluating this genome now would "
+            f"silently score it against the WRONG sensors. Refusing to continue.")
+
+
 def load_champion_genome(source):
     """source: a run_id (looked up via checkpoint.py's on-disk checkpoint for that run),
     a path to a checkpoint JSON file, or a path to a bare genome JSON file (a list of
@@ -54,8 +73,9 @@ def load_champion_genome(source):
         with open(source) as f:
             payload = json.load(f)
         if isinstance(payload, list):
-            rows = payload
+            rows = payload  # bare genome list -- no config/version metadata, can't be checked
         elif isinstance(payload, dict) and "best_genome" in payload:
+            _check_sensor_layout(payload.get("config"))
             rows = payload["best_genome"]
             if rows is None:
                 raise ValueError(f"checkpoint file {source} has no best_genome recorded yet")
@@ -67,6 +87,7 @@ def load_champion_genome(source):
         if state is None:
             raise FileNotFoundError(f"no checkpoint found for run_id={source!r}, and no file "
                                      f"exists at that path")
+        _check_sensor_layout(state.get("config"))
         rows = state["best_genome"]
         if rows is None:
             raise ValueError(f"checkpoint for run_id={source!r} has no best_genome recorded yet")

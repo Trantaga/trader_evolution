@@ -34,7 +34,7 @@ from fast_evaluator import (
     _assemble_sensor_matrix, build_price_block,
 )
 from fitness import max_drawdown, sortino_ratio
-from generator import generate_raw
+from generator_4h import generate_raw  # real-05: 4h-bar generator, matches sensors.py's active layout
 
 RESULTS = {"tier1": [], "tier2": [], "lookahead": []}
 TIER1_TRADE_TOL = 1e-6  # "fill price up to float tolerance" -- price/size only, not the decision itself
@@ -69,9 +69,9 @@ def build_test_genomes(n=50, seed=2024):
 def build_test_worlds(n_hours=5000):
     """One pure bull, one pure bear, one mix -- per the task's required sample."""
     worlds = {}
-    worlds["bull"] = generate_raw(seed=9101, n_hours=n_hours, regime_mode="pure", regime="bull")[0]
-    worlds["bear"] = generate_raw(seed=9102, n_hours=n_hours, regime_mode="pure", regime="bear")[0]
-    worlds["mix"] = generate_raw(seed=9103, n_hours=n_hours, regime_mode="mix")[0]
+    worlds["bull"] = generate_raw(seed=9101, n_periods=n_hours, regime_mode="pure", regime="bull")[0]
+    worlds["bear"] = generate_raw(seed=9102, n_periods=n_hours, regime_mode="pure", regime="bear")[0]
+    worlds["mix"] = generate_raw(seed=9103, n_periods=n_hours, regime_mode="mix")[0]
     return worlds
 
 
@@ -309,7 +309,7 @@ def benchmark():
     print("=" * 88)
     rng = np.random.default_rng(77)
     genomes = [_canonicalize(random_genome(rng, 30)) for _ in range(100)]
-    world = generate_raw(seed=555, n_hours=5000, regime_mode="mix")[0]
+    world = generate_raw(seed=555, n_periods=5000, regime_mode="mix")[0]
 
     t0 = time.perf_counter()
     for g in genomes:
@@ -332,7 +332,7 @@ def benchmark():
 
     # peak memory of the fast path at pop=200
     genomes200 = [_canonicalize(random_genome(rng, 30)) for _ in range(200)]
-    world35k = generate_raw(seed=556, n_hours=35000, regime_mode="mix")[0]
+    world35k = generate_raw(seed=556, n_periods=35000, regime_mode="mix")[0]
     tracemalloc.start()
     evaluate_population_fast(genomes200, world35k)
     current, peak = tracemalloc.get_traced_memory()

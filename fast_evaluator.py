@@ -95,8 +95,8 @@ from fitness import max_drawdown
 
 N_COINS_LOCAL = len(COINS)
 _PRICE_SENSOR_NAMES = PRICE_SENSOR_NAMES  # reused from sensors.py, not re-transcribed
-_N_PRICE_PER_COIN = len(_PRICE_SENSOR_NAMES)  # 9 (real-02: +rel_strength_short/medium, +mom_long)
-_N_PER_COIN = _N_PRICE_PER_COIN + 2  # + holding_frac, unrealized_pl = 11, matches sensors.SENSOR_NAMES layout
+_N_PRICE_PER_COIN = len(_PRICE_SENSOR_NAMES)  # derived from sensors.py -- 8 as of the v3 4h-bar layout
+_N_PER_COIN = _N_PRICE_PER_COIN + 2  # + holding_frac, unrealized_pl -- matches sensors.SENSOR_NAMES layout
 
 
 def _canonicalize(genome):
@@ -248,6 +248,7 @@ def evaluate_population_fast(genomes, world_ohlcv, params=None):
     buy_thresh, sell_thresh = p["buy_thresh"], p["sell_thresh"]
     fee_rate, slippage = p["fee_rate"], p["slippage"]
     starting_capital, cash_epsilon = p["starting_capital"], p["cash_epsilon"]
+    qty_epsilon = p["qty_epsilon"]
 
     genomes = [_canonicalize(g) for g in genomes]
     P = len(genomes)
@@ -323,7 +324,7 @@ def evaluate_population_fast(genomes, world_ohlcv, params=None):
                 notional = alloc / (1 + fee_rate)
                 fee = alloc - notional
                 new_qty = notional / fill_price
-                will_buy = will_buy & (new_qty > 0)  # matches slow engine's `if new_qty<=0: continue`
+                will_buy = will_buy & (new_qty > qty_epsilon)  # matches slow engine's `if new_qty<=qty_epsilon: continue`
                 if not will_buy.any():
                     continue
 
