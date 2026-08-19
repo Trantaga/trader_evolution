@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Evolution Lab — population vitals</title>
+<style>
+  :root{
+    --bg:#0e1316; --panel:#151b20; --panel-2:#111619; --line:#243038;
+    --ink:#e9e7df; --ink-dim:#8b98a1; --ink-faint:#5a666e;
+    --fit:#54d6c2;      /* best / champion — phosphor */
+    --med:#6aa9e0;      /* median */
+    --worst:#5b6b74;    /* worst */
+    --risk:#e0a24f;     /* drawdown / risk — amber */
+    --div:#b48ad9;      /* diversity — violet */
+    --loss:#d9694f;     /* degenerate / negative */
+    --gold:#d8b45a;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:
+      radial-gradient(1200px 600px at 78% -10%, #17232400, #0e131600),
+      var(--bg);
+    color:var(--ink); font-family:var(--sans); font-size:14px; line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--fit)}
+  /* header */
+  header{
+    display:flex; align-items:baseline; gap:18px; flex-wrap:wrap;
+    padding:20px 26px 14px; border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex; align-items:baseline; gap:12px}
+  .pulse{
+    width:9px;height:9px;border-radius:50%;background:var(--fit);
+    box-shadow:0 0 0 0 var(--fit); align-self:center;
+    animation:pulse 2.6s infinite cubic-bezier(.4,0,.2,1);
+  }
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(84,214,194,.5)}70%{box-shadow:0 0 0 9px rgba(84,214,194,0)}100%{box-shadow:0 0 0 0 rgba(84,214,194,0)}}
+  h1{font-size:16px; font-weight:600; letter-spacing:.02em; margin:0}
+  h1 .sub{color:var(--ink-faint); font-weight:400; font-family:var(--mono); font-size:12px; letter-spacing:0}
+  .runtag{margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--ink-dim)}
+  .runtag b{color:var(--fit); font-weight:600}
+  /* tabs */
+  nav{display:flex; gap:2px; padding:0 22px; border-bottom:1px solid var(--line); background:var(--panel-2)}
+  nav button{
+    appearance:none; background:none; border:0; color:var(--ink-dim);
+    font-family:var(--mono); font-size:12.5px; letter-spacing:.03em;
+    padding:12px 16px; cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-1px;
+  }
+  nav button:hover{color:var(--ink)}
+  nav button[aria-selected=true]{color:var(--ink); border-bottom-color:var(--fit)}
+  nav button .n{color:var(--ink-faint); margin-right:8px}
+  main{padding:22px 26px 60px; max-width:1180px; margin:0 auto}
+  /* dropzone */
+  .drop{
+    border:1px dashed var(--line); border-radius:10px; padding:34px 26px;
+    text-align:center; color:var(--ink-dim); background:var(--panel-2);
+    transition:border-color .15s, background .15s;
+  }
+  .drop.hot{border-color:var(--fit); background:#12211f}
+  .drop h2{color:var(--ink); font-size:15px; margin:0 0 6px; font-weight:600}
+  .drop p{margin:4px 0; font-size:13px}
+  .drop code{font-family:var(--mono); color:var(--fit); font-size:12px}
+  .drop .browse{
+    display:inline-block; margin-top:14px; font-family:var(--mono); font-size:12px;
+    color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:8px 14px; cursor:pointer;
+  }
+  .drop .browse:hover{border-color:var(--fit); color:var(--fit)}
+  /* panels grid */
+  .grid{display:grid; gap:16px; margin-top:18px}
+  .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:820px){.g2{grid-template-columns:1fr}}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 16px 12px}
+  .panel h3{margin:0 0 2px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); font-weight:600}
+  .panel .cap{font-size:12px; color:var(--ink-faint); margin:0 0 10px}
+  /* stat strip */
+  .stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px}
+  .stat{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px}
+  .stat .k{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint)}
+  .stat .v{font-family:var(--mono); font-size:22px; margin-top:6px; color:var(--ink)}
+  .stat .v.small{font-size:17px}
+  .stat .d{font-family:var(--mono); font-size:11px; margin-top:2px; color:var(--ink-dim)}
+  .up{color:var(--fit)!important} .down{color:var(--loss)!important} .warn{color:var(--risk)!important}
+  /* svg chart bits */
+  svg{display:block; width:100%; overflow:visible}
+  .axis text{fill:var(--ink-faint); font-family:var(--mono); font-size:10px}
+  .axis line,.axis path{stroke:var(--line)}
+  .gridline{stroke:var(--line); stroke-dasharray:2 4; opacity:.6}
+  .zero{stroke:var(--ink-faint); stroke-dasharray:none; opacity:.5}
+  .lbl{font-family:var(--mono); font-size:10px; fill:var(--ink-dim)}
+  .legend{display:flex; gap:16px; flex-wrap:wrap; margin-top:8px; font-family:var(--mono); font-size:11px; color:var(--ink-dim)}
+  .legend span{display:inline-flex; align-items:center; gap:6px}
+  .swatch{width:11px;height:3px;border-radius:2px;display:inline-block}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  /* tooltip */
+  .tip{position:fixed; pointer-events:none; background:#0b1013; border:1px solid var(--line);
+       border-radius:7px; padding:8px 10px; font-family:var(--mono); font-size:11px; color:var(--ink);
+       z-index:20; opacity:0; transition:opacity .08s; box-shadow:0 6px 22px #0008; white-space:nowrap}
+  .tip b{color:var(--fit)}
+  .cursorline{stroke:var(--ink-faint); opacity:.4}
+  /* table */
+  table{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12px}
+  th,td{text-align:right; padding:8px 10px; border-bottom:1px solid var(--line)}
+  th{color:var(--ink-faint); font-weight:600; text-transform:uppercase; font-size:10px; letter-spacing:.05em}
+  td:first-child,th:first-child{text-align:left}
+  tr.champ td{color:var(--fit)}
+  tr.champ td:first-child{font-weight:600}
+  .pill{display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-family:var(--mono)}
+  .pill.y{background:#12271f; color:var(--fit); border:1px solid #1c3a30}
+  .pill.n{background:#2a1512; color:var(--loss); border:1px solid #3d1e18}
+  /* verdict cards */
+  .verdicts{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin-top:4px}
+  .vcard{border:1px solid var(--line); border-radius:10px; padding:14px; background:var(--panel-2)}
+  .vcard .q{font-size:12px; color:var(--ink-dim); margin-bottom:8px; min-height:32px}
+  .vcard .a{font-family:var(--mono); font-size:15px; font-weight:600}
+  .vcard.y{border-color:#1c3a30} .vcard.n{border-color:#3d1e18}
+  .vcard.y .a{color:var(--fit)} .vcard.n .a{color:var(--loss)}
+  /* genome controls */
+  .ctrls{display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; font-family:var(--mono); font-size:12px; color:var(--ink-dim)}
+  select,.seg button{font-family:var(--mono); font-size:12px}
+  select{background:var(--panel-2); color:var(--ink); border:1px solid var(--line); border-radius:7px; padding:7px 10px}
+  .seg{display:inline-flex; border:1px solid var(--line); border-radius:7px; overflow:hidden}
+  .seg button{background:var(--panel-2); color:var(--ink-dim); border:0; padding:7px 12px; cursor:pointer}
+  .seg button[aria-pressed=true]{background:#12211f; color:var(--fit)}
+  .node-lbl{font-family:var(--mono); font-size:9.5px; fill:var(--ink-dim)}
+  .col-lbl{font-family:var(--mono); font-size:10px; fill:var(--ink-faint); letter-spacing:.08em; text-transform:uppercase}
+  .foot{margin-top:34px; color:var(--ink-faint); font-family:var(--mono); font-size:11px; text-align:center}
+  .hint{color:var(--ink-faint); font-family:var(--mono); font-size:11px}
+  .err{color:var(--loss); font-family:var(--mono); font-size:12px; margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="pulse"></span>
+    <h1>EVOLUTION&nbsp;LAB <span class="sub">// population vitals</span></h1>
+  </div>
+  <div class="runtag" id="runtag">no run loaded</div>
+</header>
+<nav id="tabs">
+  <button data-tab="evo" aria-selected="true"><span class="n">01</span>Evolution</button>
+  <button data-tab="held"><span class="n">02</span>Held-out</button>
+  <button data-tab="gen"><span class="n">03</span>Genome</button>
+</nav>
+<main id="view"></main>
+<div class="tip" id="tip"></div>
+
+<script>
+"use strict";
+const $=(s,r=document)=>r.querySelector(s), el=(t,c,h)=>{const e=document.createElement(t); if(c)e.className=c; if(h!=null)e.innerHTML=h; return e;};
+const fmt=(x,d=2)=>x==null||isNaN(x)?"–":Number(x).toFixed(d);
+const pct=(x,d=1)=>x==null||isNaN(x)?"–":(x*100).toFixed(d)+"%";
+const tip=$("#tip");
+const state={evo:null, held:null, ckpt:null, tab:"evo"};
+
+const COINS=["BTC","ETH","BNB","MATIC","SOL"];
+// Two known sensor layouts. Pick by total sensor count so old (58) and new 4h (53)
+// checkpoints both label correctly. Detection is by the max sensor id used in the genome.
+const LAYOUTS={
+  58:{per:["ret_1h","ret_6h","ret_24h","ret_168h","price_vs_sma168","vol_24h","rel_strength_short","rel_strength_medium","mom_long","holding_frac","unrealized_pl"],global:["cash_frac","breadth","bias"],name:"v2 (hourly, 58)"},
+  53:{per:["ret_4h","ret_24h","ret_168h","price_vs_sma168","vol_24h","rel_strength_short","rel_strength_medium","mom_long","holding_frac","unrealized_pl"],global:["cash_frac","breadth","bias"],name:"v3-4hbar (53)"},
+};
+function buildSensorNames(layout){
+  const out=[]; COINS.forEach(c=>layout.per.forEach(p=>out.push(c+"_"+p)));
+  layout.global.forEach(g=>out.push(g)); return out;
+}
+// choose layout from the highest sensor id a genome references
+function pickLayout(maxSensorId){
+  if(maxSensorId<=52) return LAYOUTS[53];      // fits the 53-sensor 4h layout
+  return LAYOUTS[58];                           // otherwise assume the old 58 layout
+}
+// default (used only before a genome is loaded)
+const SENSOR_NAMES=buildSensorNames(LAYOUTS[58]);
+
+/* ---------- file loading ---------- */
+function detect(name,text){
+  const t=text.trim();
+  if(name.endsWith(".jsonl")||(t.split("\n").length>1 && t[0]==="{" && !t.startsWith("{\n"))){
+    // try jsonl
+    try{ text.trim().split("\n").filter(Boolean).forEach(l=>JSON.parse(l)); return "evo"; }catch(e){}
+  }
+  try{
+    const o=JSON.parse(t);
+    if(Array.isArray(o)) return "evo-array";
+    if(o.rows&&o.verdict) return "held";
+    if(o.population||o.best_genome) return "ckpt";
+    if(o.gen!=null) return "evo-single";
+  }catch(e){}
+  // fallback: attempt jsonl
+  try{ const rs=t.split("\n").filter(Boolean).map(l=>JSON.parse(l)); if(rs.length&&rs[0].gen!=null) return "evo"; }catch(e){}
+  return null;
+}
+function loadText(name,text){
+  const kind=detect(name,text);
+  try{
+    if(kind==="evo"||kind==="evo-array"||kind==="evo-single"){
+      let rows;
+      if(kind==="evo-array") rows=JSON.parse(text);
+      else if(kind==="evo-single") rows=[JSON.parse(text)];
+      else rows=text.trim().split("\n").filter(Boolean).map(l=>JSON.parse(l));
+      rows.sort((a,b)=>a.gen-b.gen);
+      state.evo={rows,name}; state.tab="evo"; render(); flash("Loaded "+rows.length+" generations from "+name);
+    }else if(kind==="held"){
+      state.held={data:JSON.parse(text),name}; state.tab="held"; render(); flash("Loaded held-out results from "+name);
+    }else if(kind==="ckpt"){
+      state.ckpt={data:JSON.parse(text),name}; state.tab="gen"; render(); flash("Loaded checkpoint from "+name);
+    }else{
+      render(); showErr("Couldn't recognise "+name+". Expected compact.jsonl, a held-out JSON, or a checkpoint.json.");
+    }
+  }catch(e){ render(); showErr("Failed to parse "+name+": "+e.message); }
+}
+let errMsg=null;
+function showErr(m){errMsg=m; const e=$("#viewerr"); if(e)e.textContent=m;}
+function flash(m){
+  const r=$("#runtag"); if(!r) return;
+  if(state.embedded){ // embedded report: runtag is managed by the embedded loader, don't overwrite
+    const bits=[]; if(state.evo) bits.push(state.evo.rows.length+" gen"); bits.push(state.held?"held-out ✓":"running…");
+    r.innerHTML=bits.join(" · "); return;
+  }
+  r.innerHTML=(state.evo?("<b>"+(state.evo.name)+"</b> · "+state.evo.rows.length+" gen"):"no run loaded");
+}
+
+/* ---------- generic SVG line chart ---------- */
+function lineChart(host, series, opts={}){
+  // series: [{name,color,pts:[[x,y],...],width,dash}]
+  const W=opts.w||host.clientWidth||680, H=opts.h||220, m={l:46,r:14,t:12,b:26};
+  const all=series.flatMap(s=>s.pts);
+  if(!all.length){host.appendChild(el("p","hint","no data")); return;}
+  let xmin=opts.xmin??Math.min(...all.map(p=>p[0])), xmax=opts.xmax??Math.max(...all.map(p=>p[0]));
+  let ymin=opts.ymin??Math.min(...all.map(p=>p[1])), ymax=opts.ymax??Math.max(...all.map(p=>p[1]));
+  if(ymin===ymax){ymin-=1;ymax+=1;}
+  const padY=(ymax-ymin)*0.08; ymin-=padY; ymax+=padY;
+  if(opts.y0 && ymin>0) ymin=0;
+  const X=x=>m.l+(x-xmin)/(xmax-xmin||1)*(W-m.l-m.r);
+  const Y=y=>H-m.b-(y-ymin)/(ymax-ymin||1)*(H-m.t-m.b);
+  const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.setAttribute("preserveAspectRatio","none");
+  svg.style.height=H+"px";
+  const NS="http://www.w3.org/2000/svg";
+  const add=(t,a)=>{const e=document.createElementNS(NS,t); for(const k in a)e.setAttribute(k,a[k]); svg.appendChild(e); return e;};
+  // y gridlines
+  const ticks=opts.yticks||5;
+  for(let i=0;i<=ticks;i++){
+    const yv=ymin+(ymax-ymin)*i/ticks, yy=Y(yv);
+    add("line",{x1:m.l,x2:W-m.r,y1:yy,y2:yy,class:(Math.abs(yv)<1e-9?"zero":"gridline")});
+    const tx=add("text",{x:m.l-8,y:yy+3,"text-anchor":"end",class:"lbl"}); tx.textContent=opts.yfmt?opts.yfmt(yv):fmt(yv,1);
+  }
+  // x labels
+  const xt=opts.xticks||5;
+  for(let i=0;i<=xt;i++){
+    const xv=xmin+(xmax-xmin)*i/xt, xx=X(xv);
+    const tx=add("text",{x:xx,y:H-8,"text-anchor":"middle",class:"lbl"}); tx.textContent=opts.xfmt?opts.xfmt(xv):Math.round(xv);
+  }
+  // series
+  series.forEach(s=>{
+    if(s.fill){
+      let d="M"+X(s.pts[0][0])+","+Y(ymin<0?0:ymin);
+      s.pts.forEach(p=>d+=" L"+X(p[0])+","+Y(p[1]));
+      d+=" L"+X(s.pts[s.pts.length-1][0])+","+Y(ymin<0?0:ymin)+" Z";
+      add("path",{d,fill:s.fill,opacity:s.fillOpacity||0.12,stroke:"none"});
+    }
+    let d="M"+X(s.pts[0][0])+","+Y(s.pts[0][1]);
+    for(let i=1;i<s.pts.length;i++)d+=" L"+X(s.pts[i][0])+","+Y(s.pts[i][1]);
+    add("path",{d,fill:"none",stroke:s.color,"stroke-width":s.width||1.6,"stroke-dasharray":s.dash||"none","stroke-linejoin":"round","stroke-linecap":"round",opacity:s.opacity??1});
+  });
+  // optional horizontal reference line (e.g. plateau patience)
+  if(opts.hline!=null){
+    const yy=Y(opts.hline);
+    add("line",{x1:m.l,x2:W-m.r,y1:yy,y2:yy,stroke:"var(--loss)","stroke-width":1,"stroke-dasharray":"5 4",opacity:.7});
+    const t=add("text",{x:W-m.r,y:yy-5,"text-anchor":"end",class:"lbl"}); t.textContent=opts.hlineLabel||"";
+  }
+  // hover
+  const cursor=add("line",{class:"cursorline",x1:0,x2:0,y1:m.t,y2:H-m.b,opacity:0});
+  const hit=add("rect",{x:m.l,y:m.t,width:W-m.l-m.r,height:H-m.t-m.b,fill:"transparent"});
+  hit.addEventListener("mousemove",ev=>{
+    const r=svg.getBoundingClientRect(); const px=(ev.clientX-r.left)/r.width*W;
+    const xv=xmin+(px-m.l)/(W-m.l-m.r)*(xmax-xmin);
+    cursor.setAttribute("x1",X(xv)); cursor.setAttribute("x2",X(xv)); cursor.setAttribute("opacity",1);
+    let html=(opts.xlabel||"x")+" <b>"+(opts.xfmt?opts.xfmt(xv):Math.round(xv))+"</b><br>";
+    series.forEach(s=>{
+      // nearest point
+      let best=s.pts[0],bd=1e18; for(const p of s.pts){const dd=Math.abs(p[0]-xv); if(dd<bd){bd=dd;best=p;}}
+      html+=`<span style="color:${s.color}">■</span> ${s.name}: ${opts.yfmt?opts.yfmt(best[1]):fmt(best[1],2)}<br>`;
+    });
+    tip.innerHTML=html; tip.style.opacity=1; tip.style.left=(ev.clientX+14)+"px"; tip.style.top=(ev.clientY+14)+"px";
+  });
+  hit.addEventListener("mouseleave",()=>{tip.style.opacity=0; cursor.setAttribute("opacity",0);});
+  host.appendChild(svg);
+}
+function legend(host,items){
+  const l=el("div","legend");
+  items.forEach(i=>{ l.appendChild(el("span",null,`<span class="swatch" style="background:${i.c}"></span>${i.t}`)); });
+  host.appendChild(l);
+}
+// simple moving average
+function sma(arr,k){const o=[]; for(let i=0;i<arr.length;i++){let s=0,n=0; for(let j=Math.max(0,i-k+1);j<=i;j++){s+=arr[j];n++;} o.push(s/n);} return o;}
+
+/* ---------- dropzone ---------- */
+function dropzone(sub){
+  const d=el("div","drop");
+  d.innerHTML=`<h2>Drop your ${sub.title}</h2>
+    <p>${sub.desc}</p>
+    <p class="hint">expects <code>${sub.file}</code></p>
+    <label class="browse">browse…<input type="file" hidden></label>
+    <div id="viewerr" class="err"></div>`;
+  const inp=$("input",d);
+  inp.addEventListener("change",e=>{const f=e.target.files[0]; if(f)f.text().then(t=>loadText(f.name,t));});
+  ["dragenter","dragover"].forEach(ev=>d.addEventListener(ev,e=>{e.preventDefault();d.classList.add("hot");}));
+  ["dragleave","drop"].forEach(ev=>d.addEventListener(ev,e=>{e.preventDefault();d.classList.remove("hot");}));
+  d.addEventListener("drop",e=>{const f=e.dataTransfer.files[0]; if(f)f.text().then(t=>loadText(f.name,t));});
+  if(errMsg)$("#viewerr",d).textContent=errMsg;
+  return d;
+}
+
+/* ================= TAB: EVOLUTION ================= */
+function renderEvo(v){
+  if(!state.evo){ v.appendChild(dropzone({title:"evolution log",file:"compact.jsonl",desc:"One line per generation — the run's telemetry. Drag it here to watch the population's vitals."})); return; }
+  const R=state.evo.rows, gens=R.map(r=>r.gen);
+  const best=R.map(r=>r.best_fitness), med=R.map(r=>r.median_fitness), worst=R.map(r=>r.worst_fitness);
+  const dd=R.map(r=>r.mean_max_drawdown), deg=R.map(r=>r.frac_degenerate??0);
+  const dcash=R.map(r=>r.diversity?.std_cash_frac??0), dtr=R.map(r=>r.diversity?.std_n_trades??0);
+  const ntr=R.map(r=>r.mean_n_trades);
+  const last=R[R.length-1], first=R[0];
+  const bestSoFar=last.best_fitness_so_far ?? Math.max(...best);
+  // plateau counter: prefer the median-based one (patience 100); fall back to the old best-based for real-01-era logs
+  const sinceMedNow=last.generations_since_median_improvement;
+  const sinceOld=last.generations_since_improvement;
+  const sinceImp = sinceMedNow!=null ? sinceMedNow : sinceOld;
+  const patience = sinceMedNow!=null ? 100 : 60;
+  const ddDrop=dd[0]-dd[dd.length-1];
+
+  // stat strip
+  const strip=el("div","stats");
+  const stat=(k,val,cls,d)=>{const s=el("div","stat"); s.innerHTML=`<div class="k">${k}</div><div class="v ${cls||''}">${val}</div>${d?`<div class="d">${d}</div>`:""}`; return s;};
+  strip.appendChild(stat("Generations", R.length, "", "gen "+first.gen+" → "+last.gen));
+  strip.appendChild(stat("Best fitness (all-time)", fmt(bestSoFar,2), "up", last.best_gen!=null?("at gen "+last.best_gen):""));
+  strip.appendChild(stat("Median now", fmt(med[med.length-1],2), med[med.length-1]>=0?"up":"down", "was "+fmt(med[0],2)+" at start"));
+  strip.appendChild(stat("Mean drawdown", pct(dd[dd.length-1],0), dd[dd.length-1]<0.6?"up":"warn", (ddDrop>0?"↓ ":"↑ ")+pct(Math.abs(ddDrop),0)+" since start"));
+  if(sinceImp!=null) strip.appendChild(stat("Since improvement", sinceImp+" gen", sinceImp>patience*0.7?"warn":"", last.stop_reason?("stop: "+last.stop_reason):("plateau at "+patience)));
+  strip.appendChild(stat("Degenerate now", pct(deg[deg.length-1],0), deg[deg.length-1]>0.3?"warn":"", "idle / non-trading bots"));
+  v.appendChild(strip);
+
+  const grid=el("div","grid"); v.appendChild(grid);
+
+  // HERO: learning curve
+  const p1=el("div","panel"); p1.style.gridColumn="1 / -1";
+  p1.innerHTML=`<h3>Population vitals — fitness across generations</h3><p class="cap">Best, median and worst genome each generation. The heavy line is a 15-gen smoothed trend through the best; single-generation spikes are lucky world draws, the trend is the real signal.</p>`;
+  const host1=el("div"); p1.appendChild(host1); grid.appendChild(p1);
+  const bestSm=sma(best,15);
+  lineChart(host1,[
+    {name:"worst",color:"var(--worst)",pts:gens.map((g,i)=>[g,worst[i]]),width:1,opacity:.5},
+    {name:"median",color:"var(--med)",pts:gens.map((g,i)=>[g,med[i]]),width:1.4},
+    {name:"best",color:"var(--fit)",pts:gens.map((g,i)=>[g,best[i]]),width:1,opacity:.35},
+    {name:"best (trend)",color:"var(--fit)",pts:gens.map((g,i)=>[g,bestSm[i]]),width:2.6},
+  ],{h:250,xlabel:"gen",yfmt:x=>fmt(x,1)});
+  legend(host1,[{c:"var(--fit)",t:"best (+trend)"},{c:"var(--med)",t:"median"},{c:"var(--worst)",t:"worst"}]);
+
+  // drawdown + diversity
+  const row=el("div","grid g2"); grid.appendChild(row);
+  const p2=el("div","panel"); p2.innerHTML=`<h3>Risk control — mean max drawdown</h3><p class="cap">How deep the average bot's worst fall gets. Falling = the population is learning to protect capital.</p>`;
+  const h2=el("div"); p2.appendChild(h2); row.appendChild(p2);
+  lineChart(h2,[{name:"drawdown",color:"var(--risk)",pts:gens.map((g,i)=>[g,dd[i]]),width:2,fill:"var(--risk)"}],
+    {h:210,xlabel:"gen",y0:true,ymin:0,yfmt:x=>pct(x,0)});
+
+  const p3=el("div","panel"); p3.innerHTML=`<h3>Population diversity</h3><p class="cap">Spread of behaviour across the population. If this collapses to ~0 early, the run has converged prematurely.</p>`;
+  const h3=el("div"); p3.appendChild(h3); row.appendChild(p3);
+  lineChart(h3,[
+    {name:"cash-frac spread",color:"var(--div)",pts:gens.map((g,i)=>[g,dcash[i]]),width:2},
+  ],{h:210,xlabel:"gen",y0:true,ymin:0,yfmt:x=>fmt(x,2)});
+  legend(h3,[{c:"var(--div)",t:"std of cash-fraction across pop"}]);
+
+  // trades + degenerate
+  const row2=el("div","grid g2"); grid.appendChild(row2);
+  const p4=el("div","panel"); p4.innerHTML=`<h3>Trading behaviour — mean trades / bot</h3><p class="cap">How actively the average bot trades. Usually falls as evolution learns that churn burns fees.</p>`;
+  const h4=el("div"); p4.appendChild(h4); row2.appendChild(p4);
+  lineChart(h4,[{name:"trades",color:"var(--gold)",pts:gens.map((g,i)=>[g,ntr[i]]),width:2}],{h:200,xlabel:"gen",y0:true,ymin:0,yfmt:x=>Math.round(x)});
+
+  const p5=el("div","panel"); p5.innerHTML=`<h3>Idle bots — fraction degenerate</h3><p class="cap">Share of the population doing (almost) nothing. A healthy run keeps this low.</p>`;
+  const h5=el("div"); p5.appendChild(h5); row2.appendChild(p5);
+  lineChart(h5,[{name:"degenerate",color:"var(--loss)",pts:gens.map((g,i)=>[g,deg[i]]),width:2,fill:"var(--loss)"}],{h:200,xlabel:"gen",y0:true,ymin:0,ymax:Math.max(0.3,Math.max(...deg)),yfmt:x=>pct(x,0)});
+
+  // ---- new panels (all from existing compact.jsonl fields) ----
+  // pull plateau + smoothed-median fields (may be absent in older runs like real-01)
+  const smed=R.map(r=>r.smoothed_median_fitness);
+  const hasSmed=smed.some(x=>x!=null);
+  const sinceMed=R.map(r=>r.generations_since_median_improvement);
+  const hasSinceMed=sinceMed.some(x=>x!=null);
+  const nGenes=R.map(r=>r.best_genome_n_genes);
+  const fstd=R.map(r=>r.fitness_std);
+  const PATIENCE=100;
+
+  // row 3: plateau countdown + smoothed vs raw median
+  const row3=el("div","grid g2"); grid.appendChild(row3);
+
+  const p6=el("div","panel");
+  p6.innerHTML=`<h3>Plateau countdown — generations since median improved</h3><p class="cap">The stop signal. Rises toward ${PATIENCE} when the population stops improving; drops back to 0 every time the smoothed median makes a new high. Neatly climbing to ${PATIENCE} = the run is about to end.</p>`;
+  const h6=el("div"); p6.appendChild(h6); row3.appendChild(p6);
+  if(hasSinceMed){
+    lineChart(h6,[
+      {name:"since median improved",color:"var(--risk)",pts:gens.map((g,i)=>[g,sinceMed[i]]).filter(p=>p[1]!=null),width:2,fill:"var(--risk)"},
+    ],{h:210,xlabel:"gen",y0:true,ymin:0,ymax:PATIENCE,yticks:5,yfmt:x=>Math.round(x),hline:PATIENCE,hlineLabel:"plateau @ "+PATIENCE});
+  }else{
+    h6.appendChild(el("p","hint","This run predates the median-based plateau (no generations_since_median_improvement field). Showing the old best-based counter instead."));
+    const oldSince=R.map(r=>r.generations_since_improvement).filter(x=>x!=null);
+    if(oldSince.length) lineChart(h6,[{name:"since best improved (old)",color:"var(--risk)",pts:gens.map((g,i)=>[g,R[i].generations_since_improvement]).filter(p=>p[1]!=null),width:2,fill:"var(--risk)"}],{h:190,xlabel:"gen",y0:true,ymin:0,yfmt:x=>Math.round(x)});
+  }
+
+  const p7=el("div","panel");
+  p7.innerHTML=`<h3>Median fitness — smoothed vs raw</h3><p class="cap">The heavy line is the 10-gen smoothed median that actually drives the plateau decision; the faint line is the raw per-generation median. The gap shows how much world-draw noise the smoothing removes.</p>`;
+  const h7=el("div"); p7.appendChild(h7); row3.appendChild(p7);
+  const medSeries=[{name:"median (raw)",color:"var(--med)",pts:gens.map((g,i)=>[g,med[i]]),width:1,opacity:.4}];
+  if(hasSmed) medSeries.push({name:"median (smoothed)",color:"var(--med)",pts:gens.map((g,i)=>[g,smed[i]]).filter(p=>p[1]!=null),width:2.6});
+  else medSeries.push({name:"median (smoothed, computed)",color:"var(--med)",pts:gens.map((g,i)=>[g,sma(med,10)[i]]),width:2.6});
+  lineChart(h7,medSeries,{h:210,xlabel:"gen",yfmt:x=>fmt(x,1)});
+  legend(h7,[{c:"var(--med)",t:hasSmed?"smoothed (drives plateau)":"smoothed (computed here)"}]);
+
+  // row 4: population spread + champion complexity
+  const row4=el("div","grid g2"); grid.appendChild(row4);
+
+  const p8=el("div","panel");
+  p8.innerHTML=`<h3>Population spread — best-to-worst band</h3><p class="cap">The shaded band spans worst→best fitness each generation; the line is fitness std. A wide band means varied performance; a narrowing band means the population is converging on one level of skill.</p>`;
+  const h8=el("div"); p8.appendChild(h8); row4.appendChild(p8);
+  // band as two lines with fill between: emulate by best (fill down to worst not supported) -> draw best & worst, shade best area lightly
+  lineChart(h8,[
+    {name:"best",color:"var(--fit)",pts:gens.map((g,i)=>[g,best[i]]),width:1.4},
+    {name:"worst",color:"var(--worst)",pts:gens.map((g,i)=>[g,worst[i]]),width:1.4},
+    {name:"std",color:"var(--div)",pts:gens.map((g,i)=>[g,fstd[i]]),width:1.6,dash:"3 3"},
+  ],{h:210,xlabel:"gen",yfmt:x=>fmt(x,1)});
+  legend(h8,[{c:"var(--fit)",t:"best"},{c:"var(--worst)",t:"worst"},{c:"var(--div)",t:"fitness std (dashed)"}]);
+
+  const p9=el("div","panel");
+  p9.innerHTML=`<h3>Champion complexity — genes in best genome</h3><p class="cap">How many connections the best genome carries. Evolution often builds complexity up, then trims it — watch whether the champion's brain is growing or being pruned.</p>`;
+  const h9=el("div"); p9.appendChild(h9); row4.appendChild(p9);
+  lineChart(h9,[{name:"n_genes",color:"var(--gold)",pts:gens.map((g,i)=>[g,nGenes[i]]),width:2,fill:"var(--gold)"}],{h:210,xlabel:"gen",y0:true,ymin:0,yfmt:x=>Math.round(x)});
+}
+
+/* ================= TAB: HELD-OUT ================= */
+function renderHeld(v){
+  if(!state.held){ v.appendChild(dropzone({title:"held-out results",file:"heldout.json",desc:"The champion's one-shot test on real, unseen data — equity curves + verdict. See the note below to produce this file."}));
+    const note=el("div","panel"); note.style.marginTop="16px";
+    note.innerHTML=`<h3>How to produce this file</h3><p class="cap" style="line-height:1.7">
+    <code style="color:var(--fit)">evaluate_champion.py</code> currently only prints to the console and throws the baseline equity curves away.
+    Have it also write a JSON with the full per-hour equity curve for the champion and each baseline, plus the verdict booleans.
+    The dashboard expects: <code style="color:var(--ink-dim)">{ window, verdict:{beats_basket_sortino,beats_best_single_return,beats_random_median,profitable_absolute}, rows:[{label,total_return,sortino,max_drawdown,n_trades,final_value,equity_curve:[…],is_champion}] }</code>.
+    </p>`;
+    v.appendChild(note); return;
+  }
+  const D=state.held.data, rows=D.rows||[];
+  const champ=rows.find(r=>r.is_champion)||rows[0];
+  // stat strip
+  const strip=el("div","stats");
+  const stat=(k,val,cls,d)=>{const s=el("div","stat"); s.innerHTML=`<div class="k">${k}</div><div class="v ${cls||''}">${val}</div>${d?`<div class="d">${d}</div>`:""}`; return s;};
+  strip.appendChild(stat("Champion return", pct(champ.total_return,1), champ.total_return>=0?"up":"down", "$1000 → $"+fmt(champ.final_value,0)));
+  strip.appendChild(stat("Champion drawdown", pct(champ.max_drawdown,1), "", "worst fall on held-out"));
+  strip.appendChild(stat("Sortino", fmt(champ.sortino,2), champ.sortino>=0?"up":"down", "risk-adjusted"));
+  strip.appendChild(stat("Trades", champ.n_trades, "", "over the window"));
+  if(D.window) strip.appendChild(stat("Window", (D.window.n_hours?Math.round(D.window.n_hours/24)+"d":"–"), "", (D.window.start||"")));
+  v.appendChild(strip);
+
+  // verdict cards
+  if(D.verdict){
+    const vp=el("div","panel"); vp.style.marginTop="16px";
+    vp.innerHTML=`<h3>Verdict — the honest questions</h3><p class="cap">Relative wins are weak when everything fell; the one that matters most is the last card.</p>`;
+    const vg=el("div","verdicts");
+    const Q=[["beats_basket_sortino","Beats buy&hold basket on risk-adjusted return?"],
+             ["beats_best_single_return","Beats the best single-coin buy&hold on return?"],
+             ["beats_random_median","Beats a random bot (median)?"],
+             ["profitable_absolute","Made money in absolute terms?"]];
+    Q.forEach(([k,q])=>{const yes=!!D.verdict[k]; const c=el("div","vcard "+(yes?"y":"n"));
+      c.innerHTML=`<div class="q">${q}</div><div class="a">${yes?"YES":"NO"}</div>`; vg.appendChild(c);});
+    vp.appendChild(vg); v.appendChild(vp);
+  }
+
+  const grid=el("div","grid"); v.appendChild(grid);
+  // equity curves
+  const hasCurves=rows.some(r=>Array.isArray(r.equity_curve)&&r.equity_curve.length);
+  const p1=el("div","panel"); p1.style.gridColumn="1 / -1";
+  p1.innerHTML=`<h3>$1,000 on real, unseen data</h3><p class="cap">The champion (bright) against simple buy &amp; hold of each coin. This is the one chart to show anyone: where a starting $1,000 ends up.</p>`;
+  const h1=el("div"); p1.appendChild(h1); grid.appendChild(p1);
+  if(hasCurves){
+    const bcol=["var(--gold)","var(--med)","var(--div)","var(--risk)","var(--worst)","#7f8c93","#6e7d84"];
+    let bi=0;
+    // convert the x-axis to DAYS, robust to hourly vs 4h resolution:
+    // hours-per-step = window length in hours / number of curve points (falls back to 1h if unknown)
+    const curveLen=Math.max(...rows.filter(r=>Array.isArray(r.equity_curve)).map(r=>r.equity_curve.length),1);
+    const winHours=D.window&&D.window.n_hours?D.window.n_hours:curveLen; // if no window info, assume 1h steps
+    const hoursPerStep=winHours/curveLen;
+    const toDays=i=>i*hoursPerStep/24;
+    const series=rows.filter(r=>Array.isArray(r.equity_curve)&&r.equity_curve.length).map(r=>{
+      const isC=r.is_champion||/champion/i.test(r.label);
+      const col=isC?"var(--fit)":bcol[bi++%bcol.length];
+      return {name:r.label,color:col,width:isC?2.6:1.3,opacity:isC?1:.75,
+        pts:r.equity_curve.map((y,i)=>[toDays(i),y])};
+    });
+    lineChart(h1,series,{h:280,xlabel:"day",xfmt:x=>Math.round(x)+"d",yfmt:x=>"$"+Math.round(x)});
+    legend(h1,series.map(s=>({c:s.color,t:s.name})));
+  }else{
+    h1.appendChild(el("p","hint","This file has no per-hour equity_curve arrays — only summary numbers. Add equity_curve to each row (see the drop screen) to draw this chart. Showing the summary table below instead."));
+  }
+
+  // table
+  const p2=el("div","panel"); p2.style.gridColumn="1 / -1";
+  p2.innerHTML=`<h3>All strategies on the held-out window</h3>`;
+  const t=el("table"); t.innerHTML=`<thead><tr><th>strategy</th><th>return</th><th>sortino</th><th>max dd</th><th>trades</th><th>final $</th></tr></thead>`;
+  const tb=el("tbody");
+  rows.slice().sort((a,b)=>b.total_return-a.total_return).forEach(r=>{
+    const isC=r.is_champion||/champion/i.test(r.label);
+    const tr=el("tr",isC?"champ":"");
+    tr.innerHTML=`<td>${r.label}</td><td>${pct(r.total_return,2)}</td><td>${fmt(r.sortino,2)}</td><td>${pct(r.max_drawdown,1)}</td><td>${r.n_trades}</td><td>${fmt(r.final_value,0)}</td>`;
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); p2.appendChild(t); grid.appendChild(p2);
+}
+
+/* ================= TAB: GENOME ================= */
+let genomeSel={which:"best", idx:0};
+function renderGen(v){
+  if(!state.ckpt){ v.appendChild(dropzone({title:"checkpoint",file:"checkpoint.json",desc:"Contains the champion genome and the full final population — rendered as the network the bot 'thinks' with."})); return; }
+  const D=state.ckpt.data;
+  const pop=D.population||[]; const best=D.best_genome;
+  // controls
+  const ctr=el("div","ctrls");
+  const seg=el("div","seg");
+  const bBest=el("button",null,"champion"); bBest.setAttribute("aria-pressed",genomeSel.which==="best");
+  const bPop=el("button",null,"population"); bPop.setAttribute("aria-pressed",genomeSel.which==="pop");
+  bBest.onclick=()=>{genomeSel.which="best"; render();};
+  bPop.onclick=()=>{genomeSel.which="pop"; render();};
+  seg.appendChild(bBest); seg.appendChild(bPop); ctr.appendChild(el("span",null,"view:")); ctr.appendChild(seg);
+  if(genomeSel.which==="pop"){
+    const sel=el("select");
+    pop.forEach((g,i)=>{const o=el("option",null,"genome #"+i+"  ("+g.length+" genes)"); o.value=i; sel.appendChild(o);});
+    sel.value=genomeSel.idx; sel.onchange=e=>{genomeSel.idx=+e.target.value; render();};
+    ctr.appendChild(sel);
+  }
+  ctr.appendChild(el("span",null,D.run_id?("run: "+D.run_id):""));
+  if(D.best_gen!=null) ctr.appendChild(el("span",null,"· champion from gen "+D.best_gen+" · fitness "+fmt(D.best_fitness,2)));
+  v.appendChild(ctr);
+
+  const genome = genomeSel.which==="best" ? best : pop[genomeSel.idx];
+  if(!genome){ v.appendChild(el("p","hint","No genome available in this checkpoint.")); return; }
+
+  // stats — detect sensor layout from this genome
+  const usedSensors=new Set(), usedInternal=new Set();
+  genome.forEach(([st,si,kt,ki,w])=>{ if(st==="SENSOR")usedSensors.add(si); if(st==="INTERNAL")usedInternal.add(si); if(kt==="INTERNAL")usedInternal.add(ki); });
+  const maxSid=Math.max(...[...usedSensors],0);
+  const lay=pickLayout(maxSid); const nSensors=lay.per.length*COINS.length+lay.global.length;
+  const strip=el("div","stats");
+  const stat=(k,val,d)=>{const s=el("div","stat"); s.innerHTML=`<div class="k">${k}</div><div class="v small">${val}</div>${d?`<div class="d">${d}</div>`:""}`; return s;};
+  strip.appendChild(stat("Layout", lay.name, "auto-detected"));
+  strip.appendChild(stat("Connections", genome.length, "genes in this genome"));
+  strip.appendChild(stat("Sensors used", usedSensors.size+" / "+nSensors, "inputs it actually reads"));
+  strip.appendChild(stat("Hidden units used", usedInternal.size+" / 8", "internal neurons"));
+  // count skip connections
+  const skips=genome.filter(g=>g[0]==="SENSOR"&&g[2]==="ACTION").length;
+  strip.appendChild(stat("Direct sensor→action", skips, "reflex links (skip hidden)"));
+  v.appendChild(strip);
+
+  const p=el("div","panel"); p.style.marginTop="16px";
+  p.innerHTML=`<h3>How this trader thinks</h3><p class="cap">Left: the market signals it reads (only sensors it actually uses are shown). Middle: hidden units. Right: one buy/hold/sell output per coin. <span style="color:var(--fit)">Green</span> = positive weight, <span style="color:var(--loss)">red</span> = negative; thickness = strength.</p>`;
+  const host=el("div"); p.appendChild(host); v.appendChild(p);
+  drawNetwork(host,genome);
+}
+function drawNetwork(host,genome){
+  const NS="http://www.w3.org/2000/svg";
+  // detect sensor layout from the highest sensor id this genome references
+  const maxSid=Math.max(...genome.filter(g=>g[0]==="SENSOR").map(g=>g[1]),0);
+  const SNAMES=buildSensorNames(pickLayout(maxSid));
+  const usedS=[...new Set(genome.filter(g=>g[0]==="SENSOR").map(g=>g[1]))].sort((a,b)=>a-b);
+  const usedI=[...new Set(genome.flatMap(g=>[g[0]==="INTERNAL"?g[1]:null,g[2]==="INTERNAL"?g[3]:null]).filter(x=>x!=null))].sort((a,b)=>a-b);
+  const actions=[0,1,2,3,4];
+  const W=host.clientWidth||760, rowH=26;
+  const H=Math.max(usedS.length,8)*rowH+70;
+  const colX={S:150,I:W/2,A:W-120};
+  const svg=document.createElementNS(NS,"svg"); svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.style.height=H+"px";
+  const add=(t,a,txt)=>{const e=document.createElementNS(NS,t); for(const k in a)e.setAttribute(k,a[k]); if(txt!=null)e.textContent=txt; svg.appendChild(e); return e;};
+  const posS={}, posI={}, posA={};
+  const layout=(ids,x,store,total)=>{const n=ids.length; const gap=(H-50)/Math.max(n,1); ids.forEach((id,i)=>store[id]={x,y:35+gap*(i+0.5)});};
+  layout(usedS,colX.S,posS); layout(usedI,colX.I,posI); layout(actions,colX.A,posA);
+  // col labels
+  add("text",{x:colX.S,y:18,"text-anchor":"middle",class:"col-lbl"},"SENSORS");
+  add("text",{x:colX.I,y:18,"text-anchor":"middle",class:"col-lbl"},"HIDDEN");
+  add("text",{x:colX.A,y:18,"text-anchor":"middle",class:"col-lbl"},"ACTIONS");
+  // edges (sum duplicates)
+  const maxW=Math.max(...genome.map(g=>Math.abs(g[4])),1);
+  genome.forEach(([st,si,kt,ki,w])=>{
+    const a=st==="SENSOR"?posS[si]:posI[si]; const b=kt==="INTERNAL"?posI[ki]:posA[ki];
+    if(!a||!b)return;
+    const col=w>=0?"var(--fit)":"var(--loss)"; const sw=0.5+Math.abs(w)/maxW*3;
+    const mx=(a.x+b.x)/2;
+    add("path",{d:`M${a.x},${a.y} C${mx},${a.y} ${mx},${b.y} ${b.x},${b.y}`,fill:"none",stroke:col,"stroke-width":sw,opacity:.5});
+  });
+  // nodes
+  const nodeS=(pos,label,color,anchor,lx)=>{
+    add("circle",{cx:pos.x,cy:pos.y,r:4,fill:color});
+    if(label!=null){const t=add("text",{x:pos.x+lx,y:pos.y+3,"text-anchor":anchor,class:"node-lbl"},label);}
+  };
+  usedS.forEach(id=>nodeS(posS[id], SNAMES[id]||("s"+id), "var(--med)","end",-9));
+  usedI.forEach(id=>nodeS(posI[id], null, "var(--div)"));
+  actions.forEach(id=>nodeS(posA[id], COINS[id], "var(--fit)","start",9));
+  host.appendChild(svg);
+}
+
+/* ---------- router ---------- */
+function render(){
+  errMsg=null;
+  const v=$("#view"); v.innerHTML="";
+  document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected", b.dataset.tab===state.tab));
+  if(state.tab==="evo")renderEvo(v);
+  else if(state.tab==="held")renderHeld(v);
+  else renderGen(v);
+  const foot=el("div","foot","Evolution Lab · drag a file onto any tab · everything runs locally in your browser, nothing is uploaded");
+  v.appendChild(foot);
+  flash();
+}
+$("#tabs").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return; state.tab=b.dataset.tab; render();});
+// global drag/drop anywhere
+["dragover","drop"].forEach(ev=>window.addEventListener(ev,e=>e.preventDefault()));
+window.addEventListener("drop",e=>{const f=e.dataTransfer?.files?.[0]; if(f)f.text().then(t=>loadText(f.name,t));});
+
+// ---- embedded-data mode (for auto-generated per-run reports) ----
+// If the file contains a script tag with id="embedded-data" (type application/json),
+// hydrate directly from it (compact / checkpoint / heldout) instead of waiting for drag-drop.
+// Shape: { run_id, compact: [<rows>], checkpoint: {...}|null, heldout: {...}|null }
+(function tryEmbedded(){
+  const node=document.getElementById("embedded-data");
+  if(!node) { render(); return; }  // no embedded data → normal drag-drop dashboard
+  let data;
+  try{ data=JSON.parse(node.textContent); }catch(e){ render(); showErr("Embedded data failed to parse: "+e.message); return; }
+  try{
+    state.embedded=true;
+    if(Array.isArray(data.compact)&&data.compact.length){
+      const rows=data.compact.slice().sort((a,b)=>a.gen-b.gen);
+      state.evo={rows,name:(data.run_id||"run")+" · compact"};
+    }
+    if(data.checkpoint) state.ckpt={data:data.checkpoint,name:(data.run_id||"run")+" · checkpoint"};
+    if(data.heldout) state.held={data:data.heldout,name:(data.run_id||"run")+" · held-out"};
+    // pick the most informative default tab
+    state.tab = state.evo ? "evo" : (state.held ? "held" : "gen");
+    // show run id prominently in the header title; keep the runtag for supplementary info only (no duplicate name)
+    if(data.run_id){
+      const h1=document.querySelector("h1");
+      if(h1) h1.innerHTML='EVOLUTION&nbsp;LAB <span class="sub">// '+data.run_id+'</span>';
+      const r=$("#runtag");
+      if(r){
+        const bits=[];
+        if(state.evo) bits.push(state.evo.rows.length+" gen");
+        bits.push(state.held?"held-out ✓":"running…");
+        r.innerHTML=bits.join(" · ");
+      }
+    }
+    render();
+  }catch(e){ render(); showErr("Embedded data error: "+e.message); }
+})();
+</script>
+</body>
+</html>
