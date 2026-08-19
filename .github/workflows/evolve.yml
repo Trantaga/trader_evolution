@@ -21,17 +21,17 @@ on:
       population:
         description: "Population size"
         required: false
-        default: "100"
+        default: "200"
         type: string
       n_worlds:
         description: "Worlds evaluated per generation"
         required: false
-        default: "5"
+        default: "15"
         type: string
       n_generations:
         description: "Target TOTAL generations for the whole run (across all chained jobs)"
         required: false
-        default: "50"
+        default: "1500"
         type: string
       world_regime_composition:
         description: >
@@ -67,21 +67,21 @@ on:
           Uniform hours per generated world, used for BOTH pure and mix worlds UNLESS
           overridden below (default 8760 = 1y; shorten for fast throwaway/shakeout runs).
         required: false
-        default: "8760"
+        default: "4380"
         type: string
       pure_world_length_hours:
         description: >
           Override world_length_hours specifically for PURE (bull/bear/sideways) worlds
           -- e.g. a short, clean single-regime read. Blank = use world_length_hours.
         required: false
-        default: ""
+        default: "540"
         type: string
       mix_world_length_hours:
         description: >
           Override world_length_hours specifically for MIX worlds -- e.g. a long window
           to see several regime transitions per world. Blank = use world_length_hours.
         required: false
-        default: ""
+        default: "4380"
         type: string
       max_generations_per_job:
         description: >
@@ -90,7 +90,7 @@ on:
           shakeout run force the job-chaining/resume path deterministically without
           waiting on the wall-clock timer. Leave at 0 for real runs.
         required: false
-        default: "0"
+        default: "25"
         type: string
 
 # Only one job per run_id at a time -- prevents two dispatches for the same run_id from
