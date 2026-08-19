@@ -203,6 +203,14 @@ jobs:
           cp "checkpoints/run_${RID}.json" "results-wt/runs/${RID}/checkpoint.json"
           cp "logs/compact/run_${RID}.jsonl" "results-wt/runs/${RID}/compact.jsonl"
 
+          # Live report.html for this run -- heldout_dump.json doesn't exist in
+          # results-wt/runs/${RID}/ yet at this point in the job (it's only ever written
+          # by the sealed held-out step below, on the terminating job), so this always
+          # embeds heldout:null here; the dashboard shows "running..." for it until the
+          # held-out step (further down, only on the terminating job) regenerates this
+          # SAME file with heldout populated, in its own separate commit.
+          python3 tools/generate_report.py "${RID}" results-wt/runs tools/dashboard_template.html
+
           cd results-wt
           git add "runs/${RID}/"
           git commit -m "evolve: run_id=${RID}, gen ${{ github.run_number }}" || echo "nothing new to commit"
@@ -264,7 +272,9 @@ jobs:
       # feed back into evolution, checkpointing, or champion tracking. select_robust_
       # champion()'s world draws use its fixed default seed (no seed= override), and
       # evaluate_champion.py's held-out set is a locked file, so re-running this step
-      # against the same checkpoint always reproduces byte-identical output.
+      # against the same checkpoint always reproduces byte-identical output. Also
+      # regenerates runs/<run_id>/report.html (see tools/generate_report.py) so the FINAL
+      # report includes the held-out tab -- same idempotency/purity reasoning applies.
       - name: Run sealed held-out measurement (ONCE, only on the terminating job)
         if: env.done == 'True'
         run: |
@@ -330,8 +340,16 @@ jobs:
           cp heldout_tmp/heldout_dump.json "results-wt/runs/${RID}/heldout_dump.json"
           cp heldout_tmp/heldout_summary.txt "results-wt/runs/${RID}/heldout_summary.txt"
 
+          # Regenerate report.html now that heldout_dump.json exists -- checkpoint.json/
+          # compact.jsonl are already in results-wt/runs/${RID}/ (this worktree was just
+          # freshly checked out from origin/${RESULTS_BRANCH}, which the "Persist
+          # checkpoint..." step above already pushed this same job), so this produces the
+          # FINAL report for this run, with the held-out tab populated, in the same commit
+          # as the held-out dump itself.
+          python3 tools/generate_report.py "${RID}" results-wt/runs tools/dashboard_template.html
+
           cd results-wt
-          git add "runs/${RID}/heldout_dump.json" "runs/${RID}/heldout_summary.txt"
+          git add "runs/${RID}/heldout_dump.json" "runs/${RID}/heldout_summary.txt" "runs/${RID}/report.html"
           git commit -m "evolve: run_id=${RID}, sealed held-out measurement" || echo "nothing new to commit"
           git push origin "HEAD:${RESULTS_BRANCH}"
           cd ..
