@@ -1,0 +1,1 @@
+run_id=real-07 champion=final_pop_rank9 gen=207 selection_mean=1.5516 selection_std=2.0881 | held-out (184.0d, 1105 bars, 2024-03-10T00:00:00+00:00..2024-09-10T00:00:00+00:00): return=-18.79% sortino=-0.691 max_drawdown=21.22% n_trades=21
