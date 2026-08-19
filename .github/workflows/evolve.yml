@@ -249,6 +249,94 @@ jobs:
           fi
           echo "done=${DONE}" >> "$GITHUB_ENV"
 
+      # Sealed, end-of-run-only measurement -- see the module docstrings of
+      # champion_selection.py/evaluate_champion.py for why this must never be run mid-
+      # training. Guarded by the SAME env.done flag the step above just set: done is only
+      # True on the job where n_generations_cap or plateau actually fired (evolution.py's
+      # run() breaks the loop immediately once done is decided), so this cannot fire after
+      # an ordinary time/generation-budgeted chunk -- only once, on the terminating job.
+      # Idempotency guard below additionally makes a redundant re-dispatch of an
+      # already-finished run_id a no-op rather than a silent recompute-and-recommit.
+      #
+      # Pure output: reads the checkpoint that "Persist checkpoint..." above already
+      # committed (final, immutable at this point) and writes to a SEPARATE path
+      # (runs/<run_id>/heldout_*) that nothing else in this pipeline reads -- it cannot
+      # feed back into evolution, checkpointing, or champion tracking. select_robust_
+      # champion()'s world draws use its fixed default seed (no seed= override), and
+      # evaluate_champion.py's held-out set is a locked file, so re-running this step
+      # against the same checkpoint always reproduces byte-identical output.
+      - name: Run sealed held-out measurement (ONCE, only on the terminating job)
+        if: env.done == 'True'
+        run: |
+          RID="${{ steps.runid.outputs.run_id }}"
+          git config user.name "evolve-bot"
+          git config user.email "evolve-bot@users.noreply.github.com"
+          git fetch origin "${RESULTS_BRANCH}" 2>/dev/null || true
+
+          if git cat-file -e "origin/${RESULTS_BRANCH}:runs/${RID}/heldout_dump.json" 2>/dev/null; then
+            echo "runs/${RID}/heldout_dump.json already committed -- this run was already"
+            echo "measured once; skipping (this only happens on a redundant re-dispatch of"
+            echo "an already-finished run_id)."
+            exit 0
+          fi
+
+          echo "run_id=${RID} is DONE -- running the one-shot sealed held-out measurement."
+
+          mkdir -p heldout_tmp
+          python3 -c "
+          import json
+          from champion_selection import select_robust_champion
+          from checkpoint import _genome_to_json
+
+          result = select_robust_champion('checkpoints/run_${RID}.json', k_worlds=50)
+          print(f'held-out champion selection: run_id=${RID} winner={result[\"winner_label\"]} '
+                f'source_gen={result[\"winner_source_gen\"]} '
+                f'mean_fitness={result[\"winner_mean_fitness\"]:.4f} '
+                f'std_fitness={result[\"winner_std_fitness\"]:.4f} n_worlds={result[\"n_worlds\"]}')
+          with open('heldout_tmp/champion.json', 'w') as f:
+              json.dump(_genome_to_json(result['winner_genome']), f)
+          with open('heldout_tmp/champion_meta.json', 'w') as f:
+              json.dump({'winner_label': result['winner_label'],
+                         'winner_source_gen': result['winner_source_gen'],
+                         'winner_mean_fitness': result['winner_mean_fitness'],
+                         'winner_std_fitness': result['winner_std_fitness'],
+                         'n_worlds': result['n_worlds']}, f)
+          "
+
+          python3 evaluate_champion.py heldout_tmp/champion.json \
+            --dump-json heldout_tmp/heldout_dump.json
+
+          python3 -c "
+          import json
+          dump = json.load(open('heldout_tmp/heldout_dump.json'))
+          meta = json.load(open('heldout_tmp/champion_meta.json'))
+          champ = next(r for r in dump['rows'] if r['is_champion'])
+          w = dump['window']
+          summary = (
+              f'run_id=${RID} champion={meta[\"winner_label\"]} gen={meta[\"winner_source_gen\"]} '
+              f'selection_mean={meta[\"winner_mean_fitness\"]:.4f} selection_std={meta[\"winner_std_fitness\"]:.4f} | '
+              f'held-out ({w[\"n_days\"]}d, {w[\"n_bars\"]} bars, {w[\"start\"]}..{w[\"end\"]}): '
+              f'return={champ[\"total_return\"]:.2%} sortino={champ[\"sortino\"]:.3f} '
+              f'max_drawdown={champ[\"max_drawdown\"]:.2%} n_trades={champ[\"n_trades\"]}'
+          )
+          print(summary)
+          with open('heldout_tmp/heldout_summary.txt', 'w') as f:
+              f.write(summary + chr(10))
+          "
+
+          git worktree add results-wt "origin/${RESULTS_BRANCH}"
+          (cd results-wt && git checkout -B "${RESULTS_BRANCH}")
+          mkdir -p "results-wt/runs/${RID}"
+          cp heldout_tmp/heldout_dump.json "results-wt/runs/${RID}/heldout_dump.json"
+          cp heldout_tmp/heldout_summary.txt "results-wt/runs/${RID}/heldout_summary.txt"
+
+          cd results-wt
+          git add "runs/${RID}/heldout_dump.json" "runs/${RID}/heldout_summary.txt"
+          git commit -m "evolve: run_id=${RID}, sealed held-out measurement" || echo "nothing new to commit"
+          git push origin "HEAD:${RESULTS_BRANCH}"
+          cd ..
+          git worktree remove results-wt --force
+
       - name: Upload final artifact (best genome + full compact JSONL) once done
         if: env.done == 'True'
         uses: actions/upload-artifact@v4
@@ -298,3 +386,13 @@ jobs:
 # `actions: write` stored as a repo secret (e.g. `WORKFLOW_DISPATCH_TOKEN`) used in place
 # of `github.token` for that one step -- noted here rather than pre-emptively added, to
 # keep the default path on the least-privilege built-in token.
+#
+# Sealed held-out measurement (runs/<run_id>/heldout_dump.json + heldout_summary.txt):
+# added so a finished run's real-data performance is measured automatically instead of
+# by hand every time. Gated on the exact same env.done flag as the final-artifact
+# upload, which is True only on the job where evolution.run() actually decided the run
+# was over (n_generations cap or plateau -- see evolution.py's run() docstring) -- an
+# ordinary time/generation-budgeted chunk job always leaves done=False, so this cannot
+# fire mid-run. It is intentionally a dead-end output: nothing downstream (this
+# workflow, evolution.py, champion_selection.py) ever reads runs/<run_id>/heldout_*, so
+# it cannot influence a future generation, resume, or champion pick.
