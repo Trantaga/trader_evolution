@@ -1,17 +1,21 @@
 """
 generate_report.py -- builds a self-contained, offline-openable per-run HTML report by
-injecting this run's data (compact telemetry + checkpoint + held-out dump, whichever of
-the latter two exist yet) into tools/dashboard_template.html's embedded-data hydration
-point (see that file's `tryEmbedded()` -- this script writes exactly the JSON shape it
-expects: {run_id, compact, checkpoint, heldout}). The template itself is read verbatim
-and never modified -- this script only injects one <script> block into a copy of it.
+injecting this run's data (compact telemetry + checkpoint + held-out dump + full-history
+dump, whichever of the latter three exist yet) into tools/dashboard_template.html's
+embedded-data hydration point (see that file's `tryEmbedded()` -- this script writes
+exactly the JSON shape it expects: {run_id, compact, checkpoint, heldout, fullhistory}).
+The template itself is read verbatim and never modified -- this script only injects one
+<script> block into a copy of it. NOTE: as of this writing the template's own JS doesn't
+yet render a "Full history" tab from the `fullhistory` field -- it's embedded here (null
+until the sealed held-out step produces it) so the data is already present in every
+report the moment that UI is added, without needing every existing report regenerated.
 
-Pure output: reads runs/<run_id>/{compact.jsonl,checkpoint.json,heldout_dump.json} (the
-LATTER TWO optional -- checkpoint.json exists from gen 0 on, heldout_dump.json only after
-the run has terminated and the sealed held-out step has run) plus the unmodified
-template, and writes runs/<run_id>/report.html. Never reads its own output back, never
-imports evolution.py/fitness.py/champion_selection.py -- cannot feed back into any of
-them.
+Pure output: reads runs/<run_id>/{compact.jsonl,checkpoint.json,heldout_dump.json,
+fullhistory_dump.json} (the LATTER THREE optional -- checkpoint.json exists from gen 0
+on, heldout_dump.json/fullhistory_dump.json only after the run has terminated and the
+sealed held-out step has run) plus the unmodified template, and writes
+runs/<run_id>/report.html. Never reads its own output back, never imports
+evolution.py/fitness.py/champion_selection.py -- cannot feed back into any of them.
 
 CRITICAL escaping: the embedded JSON sits inside a <script type="application/json">
 block. A literal "</script>" anywhere in the DATA (e.g. inside a genome label or a stop-
@@ -53,12 +57,14 @@ def load_json_or_none(path):
         return json.load(f)
 
 
-def build_report_html(run_id, template_text, compact_rows, checkpoint_obj, heldout_obj):
+def build_report_html(run_id, template_text, compact_rows, checkpoint_obj, heldout_obj,
+                       fullhistory_obj=None):
     embedded = {
         "run_id": run_id,
         "compact": compact_rows,
         "checkpoint": checkpoint_obj,
         "heldout": heldout_obj,
+        "fullhistory": fullhistory_obj,
     }
     # See module docstring: json.dumps does NOT escape "<" by default -- do it explicitly.
     payload = json.dumps(embedded).replace("<", "\\u003c")
@@ -103,7 +109,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("run_id")
     p.add_argument("runs_root",
-                    help="directory containing <run_id>/{compact.jsonl,checkpoint.json,heldout_dump.json}")
+                    help="directory containing <run_id>/{compact.jsonl,checkpoint.json,"
+                         "heldout_dump.json,fullhistory_dump.json}")
     p.add_argument("template", help="path to tools/dashboard_template.html")
     args = p.parse_args()
 
@@ -111,18 +118,21 @@ def main():
     compact_rows = load_compact_rows(os.path.join(run_dir, "compact.jsonl"))
     checkpoint_obj = load_json_or_none(os.path.join(run_dir, "checkpoint.json"))
     heldout_obj = load_json_or_none(os.path.join(run_dir, "heldout_dump.json"))
+    fullhistory_obj = load_json_or_none(os.path.join(run_dir, "fullhistory_dump.json"))
 
     with open(args.template) as f:
         template_text = f.read()
 
-    html = build_report_html(args.run_id, template_text, compact_rows, checkpoint_obj, heldout_obj)
+    html = build_report_html(args.run_id, template_text, compact_rows, checkpoint_obj,
+                              heldout_obj, fullhistory_obj)
 
     out_path = os.path.join(run_dir, "report.html")
     with open(out_path, "w") as f:
         f.write(html)
     print(f"Wrote {out_path} ({len(html)} bytes; {len(compact_rows)} compact rows, "
           f"checkpoint={'yes' if checkpoint_obj is not None else 'no'}, "
-          f"heldout={'yes' if heldout_obj is not None else 'no'})")
+          f"heldout={'yes' if heldout_obj is not None else 'no'}, "
+          f"fullhistory={'yes' if fullhistory_obj is not None else 'no'})")
 
 
 if __name__ == "__main__":

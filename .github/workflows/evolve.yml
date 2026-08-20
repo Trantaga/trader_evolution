@@ -316,6 +316,14 @@ jobs:
           python3 evaluate_champion.py heldout_tmp/champion.json \
             --dump-json heldout_tmp/heldout_dump.json
 
+          # Full-history dump (2020-08 .. 2024-09, training + held-out in one continuous
+          # series) for the dashboard's "Full history" tab -- SAME champion genome as
+          # above, right after the held-out measurement. Mostly training-period data (see
+          # generate_fullhistory.py's module docstring) -- never a substitute for the
+          # held-out number just written above, purely an additional visualization dump.
+          python3 generate_fullhistory.py heldout_tmp/champion.json "${RID}" \
+            --dump-json heldout_tmp/fullhistory_dump.json
+
           python3 -c "
           import json
           dump = json.load(open('heldout_tmp/heldout_dump.json'))
@@ -339,17 +347,19 @@ jobs:
           mkdir -p "results-wt/runs/${RID}"
           cp heldout_tmp/heldout_dump.json "results-wt/runs/${RID}/heldout_dump.json"
           cp heldout_tmp/heldout_summary.txt "results-wt/runs/${RID}/heldout_summary.txt"
+          cp heldout_tmp/fullhistory_dump.json "results-wt/runs/${RID}/fullhistory_dump.json"
 
-          # Regenerate report.html now that heldout_dump.json exists -- checkpoint.json/
-          # compact.jsonl are already in results-wt/runs/${RID}/ (this worktree was just
-          # freshly checked out from origin/${RESULTS_BRANCH}, which the "Persist
-          # checkpoint..." step above already pushed this same job), so this produces the
-          # FINAL report for this run, with the held-out tab populated, in the same commit
-          # as the held-out dump itself.
+          # Regenerate report.html now that heldout_dump.json/fullhistory_dump.json exist
+          # -- checkpoint.json/compact.jsonl are already in results-wt/runs/${RID}/ (this
+          # worktree was just freshly checked out from origin/${RESULTS_BRANCH}, which the
+          # "Persist checkpoint..." step above already pushed this same job), so this
+          # produces the FINAL report for this run, with held-out + full-history data
+          # populated, in the same commit as the dumps themselves.
           python3 tools/generate_report.py "${RID}" results-wt/runs tools/dashboard_template.html
 
           cd results-wt
-          git add "runs/${RID}/heldout_dump.json" "runs/${RID}/heldout_summary.txt" "runs/${RID}/report.html"
+          git add "runs/${RID}/heldout_dump.json" "runs/${RID}/heldout_summary.txt" \
+                  "runs/${RID}/fullhistory_dump.json" "runs/${RID}/report.html"
           git commit -m "evolve: run_id=${RID}, sealed held-out measurement" || echo "nothing new to commit"
           git push origin "HEAD:${RESULTS_BRANCH}"
           cd ..
