@@ -15,12 +15,31 @@ Each rule's signal is precomputed ONCE per world via a causal shift(1)+rolling p
 (same look-ahead-safe pattern sensors.py uses: shifted[t] == close[t-1], so a rolling
 window ending at index t is a pure function of data <= t-1).
 
-FIXED PARAMETERS (documented here, never tuned to any data):
-  MA_CROSSOVER_PARAMS = [(24, 168), (168, 720)]   -- (fast_hours, slow_hours)
-  PRICE_VS_SMA_WINDOW = 720                        -- hours (~30d)
-  MOMENTUM_LOOKBACK_HOURS = 720                     -- hours (~30d trailing return)
-  MOMENTUM_REBALANCE_HOURS = 168                    -- hours (weekly)
-  RSI_PERIOD = 14                                   -- hours, simple (non-Wilder) rolling mean
+FIXED PARAMETERS (documented here, never tuned to any data). This module predates the
+real-05 switch to 4-hour bars (v3-4hbar / generator_4h.py) and was never updated for it --
+every window below was originally an HOUR count, but backtest_rule()/rolling() consume it
+as a raw BAR count. Left unconverted, on 4h-bar data a "168" window would silently become
+168 BARS = 672 REAL HOURS (4x too long) instead of the intended 168 real hours (~1 week)
+-- the exact same hourly/4h unit-mixup class of bug already hit (and fixed) twice
+elsewhere in this pipeline (evaluate_champion.py's held-out path and Sortino
+annualization). Fixed here the same way sensors.py's real-05 conversion note does it:
+divide the ORIGINAL real-world hour target by 4 to get the equivalent 4h-bar count, so
+these rules trade on the SAME real-world timescales as before (and the same timescales
+the champion's own sensors.py windows use), not 4x longer ones. Constants are named
+"_BARS" now, not "_HOURS", specifically so this can't silently drift again the way the
+old "_HOURS" names (holding bar counts) already fooled one reader (see the n_hours/n_bars
+incident in evaluate_champion.py's --dump-json schema).
+  MA_CROSSOVER_PARAMS = [(6, 42), (42, 180)]   bars -- (fast, slow); was (24h,168h)/(168h,720h)
+  PRICE_VS_SMA_BARS = 180                       bars -- ~30d; was 720h
+  MOMENTUM_LOOKBACK_BARS = 180                  bars -- ~30d trailing return; was 720h
+  MOMENTUM_REBALANCE_BARS = 42                  bars -- ~weekly; was 168h
+  RSI_PERIOD = 14                               bars, NOT hour-converted -- "RSI(14)" is a
+                                                 standard PERIOD-count convention on any
+                                                 chart timeframe (14 hourly bars, 14 daily
+                                                 bars, 14 4h bars are all "RSI(14)" in
+                                                 normal usage), so this stays 14 native
+                                                 bars (~2.3d) rather than being rescaled to
+                                                 an unconventional 3.5-bar RSI.
   RSI_BUY_BELOW = 30.0
   RSI_SELL_ABOVE = 70.0
 """
@@ -31,10 +50,10 @@ import pandas as pd
 from sensors import COINS, FIRST_DECIDABLE_T
 from simulator import Trade, FEE_RATE, SLIPPAGE, STARTING_CAPITAL, CASH_EPSILON, _extract_aligned_arrays
 
-MA_CROSSOVER_PARAMS = [(24, 168), (168, 720)]
-PRICE_VS_SMA_WINDOW = 720
-MOMENTUM_LOOKBACK_HOURS = 720
-MOMENTUM_REBALANCE_HOURS = 168
+MA_CROSSOVER_PARAMS = [(6, 42), (42, 180)]
+PRICE_VS_SMA_BARS = 180
+MOMENTUM_LOOKBACK_BARS = 180
+MOMENTUM_REBALANCE_BARS = 42
 RSI_PERIOD = 14
 RSI_BUY_BELOW = 30.0
 RSI_SELL_ABOVE = 70.0
@@ -133,7 +152,7 @@ def ma_crossover_portfolio(world_ohlcv, fast_w, slow_w):
 # Rule 3: PRICE vs LONG SMA -- hold when price > SMA_long, else cash. Level-based (every
 # bar), not a one-time crossing event.
 # --------------------------------------------------------------------------------------
-def price_vs_sma_portfolio(world_ohlcv, sma_window=PRICE_VS_SMA_WINDOW):
+def price_vs_sma_portfolio(world_ohlcv, sma_window=PRICE_VS_SMA_BARS):
     closes = {c: world_ohlcv[c]["close"].to_numpy(dtype=float) for c in COINS}
     above = {}
     for coin, close_arr in closes.items():
@@ -154,8 +173,8 @@ def price_vs_sma_portfolio(world_ohlcv, sma_window=PRICE_VS_SMA_WINDOW):
 # Rule 4: CROSS-SECTIONAL MOMENTUM -- weekly rebalance into the single best-trailing-
 # return coin; cash if the best trailing return is <=0.
 # --------------------------------------------------------------------------------------
-def cross_sectional_momentum(world_ohlcv, lookback_h=MOMENTUM_LOOKBACK_HOURS,
-                              rebalance_h=MOMENTUM_REBALANCE_HOURS,
+def cross_sectional_momentum(world_ohlcv, lookback_h=MOMENTUM_LOOKBACK_BARS,
+                              rebalance_h=MOMENTUM_REBALANCE_BARS,
                               first_decidable_t=FIRST_DECIDABLE_T):
     closes = {c: world_ohlcv[c]["close"].to_numpy(dtype=float) for c in COINS}
     mom = {}
@@ -218,7 +237,7 @@ def build_baseline_registry():
     return [
         ("MA_CROSSOVER_24_168", lambda w: ma_crossover_portfolio(w, 24, 168)),
         ("MA_CROSSOVER_168_720", lambda w: ma_crossover_portfolio(w, 168, 720)),
-        ("PRICE_VS_SMA720", lambda w: price_vs_sma_portfolio(w, PRICE_VS_SMA_WINDOW)),
+        ("PRICE_VS_SMA720", lambda w: price_vs_sma_portfolio(w, PRICE_VS_SMA_BARS)),
         ("CROSS_SECTIONAL_MOMENTUM", lambda w: cross_sectional_momentum(w)),
         ("RSI_MEAN_REVERSION", lambda w: rsi_mean_reversion_portfolio(w)),
     ]
