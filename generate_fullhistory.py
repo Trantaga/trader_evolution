@@ -99,12 +99,14 @@ def detect_heldout_start():
 # Reporting
 # --------------------------------------------------------------------------------------
 def build_json_dump(run_id, full_index, heldout_start_ts, heldout_start_index, rows):
+    span = full_index[-1] - full_index[0]
     payload = {
         "run_id": run_id,
         "start": full_index[0].isoformat(),
         "end": full_index[-1].isoformat(),
         "bar_hours": 4,
         "n_bars": len(full_index),
+        "n_days": round(span.total_seconds() / 86400, 1),
         "heldout_start_index": heldout_start_index,
         "heldout_start_date": heldout_start_ts.isoformat(),
         "rows": [
