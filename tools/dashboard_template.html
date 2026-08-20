@@ -144,7 +144,8 @@
 <nav id="tabs">
   <button data-tab="evo" aria-selected="true"><span class="n">01</span>Evolution</button>
   <button data-tab="held"><span class="n">02</span>Held-out</button>
-  <button data-tab="gen"><span class="n">03</span>Genome</button>
+  <button data-tab="full"><span class="n">03</span>Full history</button>
+  <button data-tab="gen"><span class="n">04</span>Genome</button>
 </nav>
 <main id="view"></main>
 <div class="tip" id="tip"></div>
@@ -155,7 +156,7 @@ const $=(s,r=document)=>r.querySelector(s), el=(t,c,h)=>{const e=document.create
 const fmt=(x,d=2)=>x==null||isNaN(x)?"–":Number(x).toFixed(d);
 const pct=(x,d=1)=>x==null||isNaN(x)?"–":(x*100).toFixed(d)+"%";
 const tip=$("#tip");
-const state={evo:null, held:null, ckpt:null, tab:"evo"};
+const state={evo:null, held:null, ckpt:null, full:null, tab:"evo"};
 
 const COINS=["BTC","ETH","BNB","MATIC","SOL"];
 // Two known sensor layouts. Pick by total sensor count so old (58) and new 4h (53)
@@ -186,6 +187,7 @@ function detect(name,text){
   try{
     const o=JSON.parse(t);
     if(Array.isArray(o)) return "evo-array";
+    if(o.heldout_start_index!=null && o.rows) return "full";  // full-history dump
     if(o.rows&&o.verdict) return "held";
     if(o.population||o.best_genome) return "ckpt";
     if(o.gen!=null) return "evo-single";
@@ -206,6 +208,8 @@ function loadText(name,text){
       state.evo={rows,name}; state.tab="evo"; render(); flash("Loaded "+rows.length+" generations from "+name);
     }else if(kind==="held"){
       state.held={data:JSON.parse(text),name}; state.tab="held"; render(); flash("Loaded held-out results from "+name);
+    }else if(kind==="full"){
+      state.full={data:JSON.parse(text),name}; state.tab="full"; render(); flash("Loaded full-history simulation from "+name);
     }else if(kind==="ckpt"){
       state.ckpt={data:JSON.parse(text),name}; state.tab="gen"; render(); flash("Loaded checkpoint from "+name);
     }else{
@@ -272,6 +276,14 @@ function lineChart(host, series, opts={}){
     const yy=Y(opts.hline);
     add("line",{x1:m.l,x2:W-m.r,y1:yy,y2:yy,stroke:"var(--loss)","stroke-width":1,"stroke-dasharray":"5 4",opacity:.7});
     const t=add("text",{x:W-m.r,y:yy-5,"text-anchor":"end",class:"lbl"}); t.textContent=opts.hlineLabel||"";
+  }
+  // optional vertical reference line (e.g. train | held-out divider)
+  if(opts.vline!=null){
+    const xx=X(opts.vline);
+    add("line",{x1:xx,x2:xx,y1:m.t,y2:H-m.b,stroke:"var(--fit)","stroke-width":1.5,"stroke-dasharray":"4 3",opacity:.8});
+    const t=add("text",{x:xx+4,y:m.t+10,"text-anchor":"start",class:"lbl",fill:"var(--fit)"}); t.textContent=opts.vlineLabel||"";
+    // subtle shade over the held-out region (right of the line)
+    add("rect",{x:xx,y:m.t,width:(W-m.r)-xx,height:(H-m.b)-m.t,fill:"var(--fit)",opacity:0.04});
   }
   // hover
   const cursor=add("line",{class:"cursorline",x1:0,x2:0,y1:m.t,y2:H-m.b,opacity:0});
@@ -604,6 +616,68 @@ function drawNetwork(host,genome){
   host.appendChild(svg);
 }
 
+/* ================= TAB: FULL HISTORY ================= */
+function renderFull(v){
+  if(!state.full){ v.appendChild(dropzone({title:"full-history simulation",file:"fullhistory_dump.json",desc:"The champion run over the ENTIRE history vs all baselines. Note: most of this is TRAINING data — only the held-out portion (marked) is an honest test."}));
+    return;
+  }
+  const D=state.full.data, rows=D.rows||[];
+  const champ=rows.find(r=>r.is_champion)||rows[0];
+  const nbars=D.n_bars||(champ.equity_curve?champ.equity_curve.length:0);
+  const hIdx=D.heldout_start_index!=null?D.heldout_start_index:null;
+  const barH=D.bar_hours||4;
+  const toDays=i=>i*barH/24;
+
+  // honesty banner
+  const warn=el("div","panel"); warn.style.borderColor="#3d3418"; warn.style.background="#1a1710";
+  warn.innerHTML=`<h3 style="color:var(--risk)">⚠ Read this before the chart</h3><p class="cap" style="line-height:1.6">Most of this curve is over <b style="color:var(--risk)">training data</b> — the generator was calibrated on it, so the champion effectively "knows" it and its performance there is inflated. <b style="color:var(--fit)">Only the held-out portion</b> (right of the divider) is an honest, unseen test. Use the left part as an illustration of the path, not as evidence of skill.</p>`;
+  v.appendChild(warn);
+
+  // stat strip
+  const strip=el("div","stats");
+  const stat=(k,val,cls,d)=>{const s=el("div","stat"); s.innerHTML=`<div class="k">${k}</div><div class="v ${cls||''}">${val}</div>${d?`<div class="d">${d}</div>`:""}`; return s;};
+  strip.appendChild(stat("Champion — full history", pct(champ.total_return,0), champ.total_return>=0?"up":"down", "$1000 → $"+fmt(champ.final_value,0)+" (mostly trained)"));
+  if(D.start) strip.appendChild(stat("Span", (D.n_days?Math.round(D.n_days/365*10)/10+"y":"–"), "", (D.start||"")+" → "+(D.end||"")));
+  strip.appendChild(stat("Bars", nbars, "", barH+"h candles"));
+  if(hIdx!=null) strip.appendChild(stat("Held-out starts", "day "+Math.round(toDays(hIdx)), "", (D.heldout_start_date||"")+" — only this part is honest"));
+  v.appendChild(strip);
+
+  // equity chart — LOG scale (values span orders of magnitude over 4y)
+  const p1=el("div","panel"); p1.style.gridColumn="1 / -1"; p1.style.marginTop="16px";
+  p1.innerHTML=`<h3>$1,000 over the entire history — champion vs all baselines</h3><p class="cap">Log scale (values span orders of magnitude). The vertical line marks where the honest held-out test begins; everything left of it is training data.</p>`;
+  const host=el("div"); p1.appendChild(host); v.appendChild(p1);
+
+  // decimate for smoothness: cap around ~1500 points per series
+  const step=Math.max(1,Math.floor(nbars/1500));
+  const logv=y=>Math.log10(Math.max(y,1)); // guard against <=0
+  const bcol=["var(--gold)","var(--med)","var(--div)","var(--risk)","var(--worst)","#7f8c93","#6e7d84","#8a9ba3","#b0763f","#5f7d6e"];
+  let bi=0;
+  const series=rows.filter(r=>Array.isArray(r.equity_curve)&&r.equity_curve.length).map(r=>{
+    const isC=r.is_champion||/champion/i.test(r.label);
+    const col=isC?"var(--fit)":bcol[bi++%bcol.length];
+    const pts=[]; for(let i=0;i<r.equity_curve.length;i+=step) pts.push([toDays(i),logv(r.equity_curve[i])]);
+    return {name:r.label,color:col,width:isC?2.4:1,opacity:isC?1:.6,pts};
+  });
+  // draw with a custom log y-formatter (show $ values at log ticks)
+  lineChart(host,series,{h:340,xlabel:"day",xfmt:x=>Math.round(x/365*10)/10+"y",
+    yfmt:x=>"$"+Math.round(Math.pow(10,x)).toLocaleString(),
+    vline: hIdx!=null?toDays(hIdx):null, vlineLabel:"held-out →"});
+  legend(host,series.map(s=>({c:s.color,t:s.name})));
+
+  // final-value table (full history + held-out-only if we can compute it)
+  const p2=el("div","panel"); p2.style.gridColumn="1 / -1";
+  p2.innerHTML=`<h3>Final $1,000 → outcome over full history</h3><p class="cap">Remember: full-history numbers are inflated by training data. Ranking is more meaningful than the absolute values.</p>`;
+  const t=el("table"); t.innerHTML=`<thead><tr><th>strategy</th><th>total return</th><th>final $</th></tr></thead>`;
+  const tb=el("tbody");
+  rows.slice().sort((a,b)=>b.total_return-a.total_return).forEach(r=>{
+    const isC=r.is_champion||/champion/i.test(r.label);
+    const tr=el("tr",isC?"champ":"");
+    tr.innerHTML=`<td>${r.label}</td><td>${pct(r.total_return,1)}</td><td>${fmt(r.final_value,0)}</td>`;
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); p2.appendChild(t); v.appendChild(p2);
+}
+
 /* ---------- router ---------- */
 function render(){
   errMsg=null;
@@ -611,6 +685,7 @@ function render(){
   document.querySelectorAll("#tabs button").forEach(b=>b.setAttribute("aria-selected", b.dataset.tab===state.tab));
   if(state.tab==="evo")renderEvo(v);
   else if(state.tab==="held")renderHeld(v);
+  else if(state.tab==="full")renderFull(v);
   else renderGen(v);
   const foot=el("div","foot","Evolution Lab · drag a file onto any tab · everything runs locally in your browser, nothing is uploaded");
   v.appendChild(foot);
@@ -638,6 +713,7 @@ window.addEventListener("drop",e=>{const f=e.dataTransfer?.files?.[0]; if(f)f.te
     }
     if(data.checkpoint) state.ckpt={data:data.checkpoint,name:(data.run_id||"run")+" · checkpoint"};
     if(data.heldout) state.held={data:data.heldout,name:(data.run_id||"run")+" · held-out"};
+    if(data.fullhistory) state.full={data:data.fullhistory,name:(data.run_id||"run")+" · full history"};
     // pick the most informative default tab
     state.tab = state.evo ? "evo" : (state.held ? "held" : "gen");
     // show run id prominently in the header title; keep the runtag for supplementary info only (no duplicate name)
